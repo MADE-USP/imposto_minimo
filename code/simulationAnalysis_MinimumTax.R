@@ -14,6 +14,8 @@ library(dplyr)
 library(tidyr)
 library(scales)
 library(this.path)
+install.packages("writexl")
+library(writexl)
 setwd(this.dir())
 
 cores_made <- c("#45ff66", "#eb52ff", "#3366ff","#feff41")
@@ -91,6 +93,7 @@ find_bruto <- function(liquido, tax_table, lower_bound = 0, upper_bound = 1e9) {
   result <- uniroot(f, lower = lower_bound, upper = upper_bound)
   return(result$root)
 }
+
 pnadc_receita_final <- pnadc_receita_final %>% mutate(`13º salário` =  replace_na(`13º salário`, 0))
 pnadc_receita_final <- pnadc_receita_final %>% mutate(imposto_13 = mapply(find_bruto, `13º salário`, MoreArgs = list(tax_table = tax_table))-`13º salário`)
 
@@ -288,3 +291,233 @@ pAliMax <- ggplot(df_long, aes(x = divisao_renda, y = Aliquota_Efetiva,
         legend.position = "bottom")
 
 print(pAliMax)
+
+
+
+###############################################################################################
+                                  ######### GKM ###########
+
+# Cria coluna auxiliar com alíquota efetiva apenas para cálculo do limite
+pnadc_receita_final <- pnadc_receita_final %>%
+  mutate(aliq_efetiva_atual = if_else(renda_base > 0, imposto_calculado / renda_base, NA_real_))
+
+limite_renda <- pnadc_receita_final %>%
+  filter(is.finite(aliq_efetiva_atual)) %>%
+  slice(which.min(abs(aliq_efetiva_atual - aliMax))) %>%
+  pull(renda_base)
+
+# Aplica imposto com alíquota máxima acima do limite
+pnadc_receita_final <- pnadc_receita_final %>%
+  mutate(imposto_ali_max_novo = if_else(renda_base > limite_renda,
+                                        aliMax * renda_base,
+                                        imposto_calculado))
+
+irpf_total_novo_aliMax <- 1.16 * 12 * sum(pnadc_receita_final$peso_comcalib * pnadc_receita_final$imposto_ali_max_novo, na.rm = TRUE) / 1e9
+
+# Gini:
+
+# Recalcula arrecadações com base nas suas fórmulas
+irpf_total_atual <- 1.16 * 12 * sum(pnadc_receita_final$peso_comcalib *
+                                      (pnadc_receita_final$irpf_mensal_antigo +
+                                         pnadc_receita_final$imposto_withholding)) / 1e9
+
+irpf_total_novo <- 1.16 * 12 * sum(pnadc_receita_final$peso_comcalib *
+                                     pnadc_receita_final$imposto_calculado) / 1e9
+
+irpf_total_aliMax <- 1.16 * 12 * sum(pnadc_receita_final$peso_comcalib *
+                                       pnadc_receita_final$imposto_ali_max_novo) / 1e9
+
+# Diferenças em relação ao atual
+dif_arrec_novo <- irpf_total_novo - irpf_total_atual
+dif_arrec_aliMax <- irpf_total_aliMax - irpf_total_atual
+
+# Estatísticas distributivas
+## Regime atual
+gini_atual <- StatsGini(pnadc_receita_final$renda_pos_atual, pnadc_receita_final$peso_comcalib)
+bottom50_atual <- Bottom_Aprop(pnadc_receita_final$renda_pos_atual, pnadc_receita_final$peso_comcalib, 50)
+top9_atual <- Top_Aprop(pnadc_receita_final$renda_pos_atual, pnadc_receita_final$peso_comcalib, 91)
+top1_atual <- Top_Aprop(pnadc_receita_final$renda_pos_atual, pnadc_receita_final$peso_comcalib, 99)
+
+## Nova proposta original
+gini_novo <- StatsGini(pnadc_receita_final$renda_pos_novo, pnadc_receita_final$peso_comcalib)
+bottom50_novo <- Bottom_Aprop(pnadc_receita_final$renda_pos_novo, pnadc_receita_final$peso_comcalib, 50)
+top9_novo <- Top_Aprop(pnadc_receita_final$renda_pos_novo, pnadc_receita_final$peso_comcalib, 91)
+top1_novo <- Top_Aprop(pnadc_receita_final$renda_pos_novo, pnadc_receita_final$peso_comcalib, 99)
+
+## Nova com alíquota máxima estendida
+gini_aliMax <- StatsGini(pnadc_receita_final$renda_pos_aliMax, pnadc_receita_final$peso_comcalib)
+bottom50_aliMax <- Bottom_Aprop(pnadc_receita_final$renda_pos_aliMax, pnadc_receita_final$peso_comcalib, 50)
+top9_aliMax <- Top_Aprop(pnadc_receita_final$renda_pos_aliMax, pnadc_receita_final$peso_comcalib, 91)
+top1_aliMax <- Top_Aprop(pnadc_receita_final$renda_pos_aliMax, pnadc_receita_final$peso_comcalib, 99)
+
+# Tabela final
+tabela_resultados <- data.frame(
+  Cenário = c("Regime Atual", "Nova Proposta", "Nova c/ Aliq. Máxima"),
+  Gini = c(gini_atual, gini_novo, gini_aliMax),
+  Bottom_50 = c(bottom50_atual, bottom50_novo, bottom50_aliMax),
+  Top_9 = c(top9_atual, top9_novo, top9_aliMax),
+  Top_1 = c(top1_atual, top1_novo, top1_aliMax),
+  Arrecadacao_BR = c(irpf_total_atual, irpf_total_novo, irpf_total_aliMax),
+  Dif_Arrecadacao_BR = c(0, dif_arrec_novo, dif_arrec_aliMax)
+)
+
+# Exibe
+print(tabela_resultados)
+
+# Salva como CSV
+write.csv(tabela_resultados, "resultados_distributivos_com_arrecadacao.csv", row.names = FALSE)
+write_xlsx(tabela_resultados, "resultados_distributivos_com_arrecadacao.xlsx")
+
+# Gerar outros indicadores de desigualdade:
+# Função para calcular média ponderada no top 0.1%
+media_top_01 <- function(renda, peso) {
+  limite_999 <- wtd.quantile(renda, weights = peso, probs = 0.999, na.rm = TRUE)
+  top_01 <- renda > limite_999
+  sum(renda[top_01] * peso[top_01], na.rm = TRUE) / sum(peso[top_01], na.rm = TRUE)
+}
+
+# Função estendida com a nova razão
+calcular_indicadores_ext <- function(renda, peso, nome_cenario) {
+  p10 <- wtd.quantile(renda, weights = peso, probs = 0.10, na.rm = TRUE)
+  p50 <- wtd.quantile(renda, weights = peso, probs = 0.50, na.rm = TRUE)
+  p99 <- wtd.quantile(renda, weights = peso, probs = 0.99, na.rm = TRUE)
+  media_top001 <- media_top_01(renda, peso)
+  
+  data.frame(
+    Cenário = nome_cenario,
+    P10 = p10,
+    P50 = p50,
+    P99 = p99,
+    Dif_P50_P10 = p50 - p10,
+    Dif_P99_P50 = p99 - p50,
+    Razao_P50_P10 = p50 / p10,
+    Razao_P99_P50 = p99 / p50,
+    Media_Top_0.1 = media_top001,
+    Razao_Top001_P50 = media_top001 / p50
+  )
+}
+
+# Aplica para os 3 cenários
+indicadores_atual_ext <- calcular_indicadores_ext(pnadc_receita_final$renda_pos_atual,
+                                                  pnadc_receita_final$peso_comcalib,
+                                                  "Regime Atual")
+
+indicadores_novo_ext <- calcular_indicadores_ext(pnadc_receita_final$renda_pos_novo,
+                                                 pnadc_receita_final$peso_comcalib,
+                                                 "Nova Proposta")
+
+indicadores_aliMax_ext <- calcular_indicadores_ext(pnadc_receita_final$renda_pos_aliMax,
+                                                   pnadc_receita_final$peso_comcalib,
+                                                   "Nova c/ Aliq. Máxima")
+
+# Junta tudo
+tabela_percentis_ext <- bind_rows(indicadores_atual_ext, indicadores_novo_ext, indicadores_aliMax_ext)
+
+# Exibe
+print(tabela_percentis_ext)
+
+# Salva em Excel
+write_xlsx(tabela_percentis_ext, "indicadores_percentis_renda_extendido.xlsx")
+
+# Grafico com apropriacao:
+
+library(dplyr)
+library(ggplot2)
+
+# Função para calcular apropriação por centil
+apropriacao_por_centil <- function(renda, peso, nome_cenario) {
+  df <- data.frame(renda = renda, peso = peso) %>%
+    mutate(centil = weighted_ntile(renda, peso, 100)) %>%
+    group_by(centil) %>%
+    summarise(
+      renda_total = sum(renda * peso, na.rm = TRUE)
+    ) %>%
+    mutate(
+      prop_renda = renda_total / sum(renda_total),
+      Cenário = nome_cenario
+    )
+  return(df)
+}
+
+# Aplica para os 3 cenários
+df_atual <- apropriacao_por_centil(pnadc_receita_final$renda_pos_atual,
+                                   pnadc_receita_final$peso_comcalib,
+                                   "Regime Atual")
+
+df_novo <- apropriacao_por_centil(pnadc_receita_final$renda_pos_novo,
+                                  pnadc_receita_final$peso_comcalib,
+                                  "Nova Proposta")
+
+df_aliMax <- apropriacao_por_centil(pnadc_receita_final$renda_pos_aliMax,
+                                    pnadc_receita_final$peso_comcalib,
+                                    "Nova c/ Aliq. Máxima")
+
+# Junta tudo
+df_aprop <- bind_rows(df_atual, df_novo, df_aliMax)
+
+ggplot(df_aprop, aes(x = centil, y = prop_renda, color = Cenário)) +
+  geom_line(linewidth = 0.4) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 0.1)) +
+  scale_color_manual(values = c(
+    "Regime Atual" = "#3366ff",
+    "Nova Proposta" = "#eb52ff",
+    "Nova c/ Aliq. Máxima" = "#feff41"
+  )) +
+  labs(
+    title = "Apropriação da Renda por Centil",
+    x = "Centil de Renda",
+    y = "Proporção da Renda Total (%)",
+    color = "Cenário"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "bottom")
+
+ggsave("apropriacao_renda_por_centil.png", width = 8, height = 5, dpi = 300)
+
+#Curva de apropriacao acumulada:
+
+# Função para apropriação por centil
+apropriacao_por_centil <- function(renda, peso, nome_cenario) {
+  data.frame(renda = renda, peso = peso) %>%
+    mutate(centil = weighted_ntile(renda, peso, 100)) %>%
+    group_by(centil) %>%
+    summarise(
+      renda_total = sum(renda * peso, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    mutate(
+      prop_renda = renda_total / sum(renda_total),
+      Cenário = nome_cenario
+    )
+}
+
+# Recria as 3 bases
+df_atual   <- apropriacao_por_centil(pnadc_receita_final$renda_pos_atual,   pnadc_receita_final$peso_comcalib, "Regime Atual")
+df_novo    <- apropriacao_por_centil(pnadc_receita_final$renda_pos_novo,    pnadc_receita_final$peso_comcalib, "Nova Proposta")
+df_aliMax  <- apropriacao_por_centil(pnadc_receita_final$renda_pos_aliMax,  pnadc_receita_final$peso_comcalib, "Nova c/ Aliq. Máxima")
+
+
+df_aprop_acumulada <- df_aprop %>%
+  group_by(Cenário) %>%
+  arrange(centil) %>%
+  mutate(prop_renda_acumulada = cumsum(prop_renda)) %>%
+  ungroup()
+
+ggplot(df_aprop_acumulada, aes(x = centil, y = prop_renda_acumulada, color = Cenário)) +
+  geom_line(linewidth = 0.4) +  # <- mais fino aqui
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  scale_x_continuous(breaks = seq(0, 100, 10)) +
+  scale_color_manual(values = c(
+    "Regime Atual" = "#3366ff",
+    "Nova Proposta" = "#eb52ff",
+    "Nova c/ Aliq. Máxima" = "#feff41"
+  )) +
+  labs(
+    title = "Apropriação Acumulada da Renda por Centil",
+    x = "Centil de Renda (ordem crescente)",
+    y = "Apropriação Acumulada (%)",
+    color = "Cenário"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "bottom")
+
