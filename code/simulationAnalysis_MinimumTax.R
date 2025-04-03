@@ -14,12 +14,11 @@ library(dplyr)
 library(tidyr)
 library(scales)
 library(this.path)
-install.packages("writexl")
 library(writexl)
 setwd(this.dir())
 
 cores_made <- c("#45ff66", "#eb52ff", "#3366ff","#feff41")
-load('../data/baseRendimentosIsentos.Rda')
+load('../data/baseRendimentosIsentosPlrAdj.Rda')
 
 
 # 1 - Parâmetros de Faixas e Alíquotas (Regime Atual) -------------------------
@@ -100,9 +99,9 @@ pnadc_receita_final <- pnadc_receita_final %>% mutate(imposto_13 = mapply(find_b
 pnadc_receita_final <- pnadc_receita_final %>% mutate(`Rendimentos Recebidos Acumuladamente` =  replace_na(`Rendimentos Recebidos Acumuladamente`, 0))
 pnadc_receita_final <- pnadc_receita_final %>% mutate(imposto_rra = mapply(find_bruto, `Rendimentos Recebidos Acumuladamente`, MoreArgs = list(tax_table = tax_table))-`Rendimentos Recebidos Acumuladamente`)
 
-pnadc_receita_final <- pnadc_receita_final %>% mutate(`Participação nos Lucros ou Resultados` =  replace_na(`Rendimentos Recebidos Acumuladamente`, 0))
-pnadc_receita_final <- pnadc_receita_final %>% mutate(`Participação nos Lucros ou Resultados` =  `Participação nos Lucros ou Resultados`*12)
-pnadc_receita_final <- pnadc_receita_final %>% mutate(imposto_plr = mapply(find_bruto, `Participação nos Lucros ou Resultados`, MoreArgs = list(tax_table = tax_table_plr))-`Participação nos Lucros ou Resultados`)
+pnadc_receita_final <- pnadc_receita_final %>% mutate(plr_distribuido =  replace_na(plr_distribuido, 0))
+pnadc_receita_final <- pnadc_receita_final %>% mutate(plr_distribuido =  plr_distribuido*12)
+pnadc_receita_final <- pnadc_receita_final %>% mutate(imposto_plr = mapply(find_bruto, plr_distribuido, MoreArgs = list(tax_table = tax_table_plr))-plr_distribuido)
 pnadc_receita_final <- pnadc_receita_final %>% mutate(imposto_plr = imposto_plr/12)
 
 pnadc_receita_final <- pnadc_receita_final %>% mutate(`Ganhos de Capital na Alienação de Bens/Direitos` =  replace_na(`Ganhos de Capital na Alienação de Bens/Direitos`, 0))
@@ -265,6 +264,7 @@ graphAliMax <- pnadc_receita_final %>% group_by(divisao_renda) %>%
   summarise(Regime_Atual = sum((imposto_withholding+irpf_mensal_antigo)*peso_comcalib)/sum(renda_base*peso_comcalib)*100,
             Nova_Proposta = sum(imposto_calculado*peso_comcalib)/sum(renda_base*peso_comcalib)*100,
             Proposta_Aliquota_Maxima = sum(imposto_ali_max*peso_comcalib)/sum(renda_base*peso_comcalib)*100)
+pnadc_receita_final <- pnadc_receita_final %>% mutate('renda_pos_aliMax' = renda_base - imposto_ali_max)
 
 # Converte para formato longo
 df_long <- graphAliMax %>%
@@ -365,8 +365,8 @@ tabela_resultados <- data.frame(
 print(tabela_resultados)
 
 # Salva como CSV
-write.csv(tabela_resultados, "resultados_distributivos_com_arrecadacao.csv", row.names = FALSE)
-write_xlsx(tabela_resultados, "resultados_distributivos_com_arrecadacao.xlsx")
+write.csv(tabela_resultados, "../tables/resultados_distributivos_com_arrecadacao.csv", row.names = FALSE)
+write_xlsx(tabela_resultados, "../tables/resultados_distributivos_com_arrecadacao.xlsx")
 
 # Gerar outros indicadores de desigualdade:
 # Função para calcular média ponderada no top 0.1%
@@ -417,12 +417,9 @@ tabela_percentis_ext <- bind_rows(indicadores_atual_ext, indicadores_novo_ext, i
 print(tabela_percentis_ext)
 
 # Salva em Excel
-write_xlsx(tabela_percentis_ext, "indicadores_percentis_renda_extendido.xlsx")
+write_xlsx(tabela_percentis_ext, "../tables/indicadores_percentis_renda_extendido.xlsx")
 
 # Grafico com apropriacao:
-
-library(dplyr)
-library(ggplot2)
 
 # Função para calcular apropriação por centil
 apropriacao_por_centil <- function(renda, peso, nome_cenario) {
@@ -472,7 +469,7 @@ ggplot(df_aprop, aes(x = centil, y = prop_renda, color = Cenário)) +
   theme_minimal(base_size = 13) +
   theme(legend.position = "bottom")
 
-ggsave("apropriacao_renda_por_centil.png", width = 8, height = 5, dpi = 300)
+ggsave("../figures/apropriacao_renda_por_centil.png", width = 8, height = 5, dpi = 300)
 
 #Curva de apropriacao acumulada:
 
@@ -496,14 +493,13 @@ df_atual   <- apropriacao_por_centil(pnadc_receita_final$renda_pos_atual,   pnad
 df_novo    <- apropriacao_por_centil(pnadc_receita_final$renda_pos_novo,    pnadc_receita_final$peso_comcalib, "Nova Proposta")
 df_aliMax  <- apropriacao_por_centil(pnadc_receita_final$renda_pos_aliMax,  pnadc_receita_final$peso_comcalib, "Nova c/ Aliq. Máxima")
 
-
 df_aprop_acumulada <- df_aprop %>%
   group_by(Cenário) %>%
   arrange(centil) %>%
   mutate(prop_renda_acumulada = cumsum(prop_renda)) %>%
   ungroup()
 
-ggplot(df_aprop_acumulada, aes(x = centil, y = prop_renda_acumulada, color = Cenário)) +
+ggplot(df_aprop_acumulada %>% filter(Cenário != "Regime Atual"), aes(x = centil, y = prop_renda_acumulada, color = Cenário)) +
   geom_line(linewidth = 0.4) +  # <- mais fino aqui
   scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
   scale_x_continuous(breaks = seq(0, 100, 10)) +
