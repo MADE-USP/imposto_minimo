@@ -128,9 +128,9 @@ pnadc_receita_final <- pnadc_receita_final %>% mutate(imposto_withholding = repl
 
 calcula_irpf_mensal_novo <- function(renda) {
   # Primeiro, calcula o imposto base conforme a redução até 7.000
-  if (renda <= 5000) {
+  if (renda <= 5000/1.16) {
     base_tax <- 0
-  } else if (renda <= 7000) {
+  } else if (renda <= 7000/1.16) {
     reducao <- 1095.11 - 0.156445 * renda
     base_tax <- max(calcula_irpf_mensal_antigo(renda) - reducao, 0)
   } else {
@@ -152,10 +152,10 @@ pnadc_receita_final <- pnadc_receita_final %>% mutate(aliquota_pre_ricos = (impo
 pnadc_receita_final <- pnadc_receita_final %>% mutate(base_tax = imposto_withholding+irpf_mensal_novo)
 # Aplica complemento para altas rendas:
 imposto_final <- function(base_tax,renda){
-  if (renda <= 50000) {
+  if (renda <= 50000/1.16) {
     return(base_tax)
-  } else if (renda < 100000) {
-    desired_tax <- (((renda * 12 / 60000 - 10)))/100 * renda
+  } else if (renda < 100000/1.16) {
+    desired_tax <- (((renda * 12 / 60000/1.16 - 10)))/100 * renda
     return(max(base_tax, desired_tax))
   } else {  # Caso renda >= 100
     desired_tax <- (0.10) * renda
@@ -216,8 +216,8 @@ pnadc_receita_final$quantis <- weighted_ntile(pnadc_receita_final$renda_base,
 pnadc_receita_final <- pnadc_receita_final %>%
   mutate(
     divisao_renda = case_when(
-      renda_base >= 100000 ~ "Milionários",
-      renda_base >= 50000  ~ "Ricos",
+      renda_base >= 100000/1.16 ~ "Milionários",
+      renda_base >= 50000/1.16  ~ "Ricos",
       TRUE ~ as.character(quantis)
     )
   )
@@ -226,31 +226,113 @@ pnadc_receita_agg <- pnadc_receita_final %>% group_by(divisao_renda) %>%
                                                summarise(Regime_Atual = sum((imposto_withholding+irpf_mensal_antigo)*peso_comcalib)/sum(renda_base*peso_comcalib)*100,
                                                          Nova_Proposta = sum(imposto_calculado*peso_comcalib)/sum(renda_base*peso_comcalib)*100)
 
-# Converte para formato longo
+
+
+##### Abrindo ultimo decil:
+
+pnadc_receita_final$quantis <- weighted_ntile(pnadc_receita_final$renda_base,
+                                              pnadc_receita_final$peso_comcalib, 100)
+
+
+# Calcula centis
+pnadc_receita_final$quantis <- weighted_ntile(pnadc_receita_final$renda_base,
+                                              pnadc_receita_final$peso_comcalib, 100)
+
+# Cria subdecis dentro do centil 100
+pnadc_receita_final <- pnadc_receita_final %>%
+  group_by(subgrupo = quantis == 100) %>%
+  mutate(subdecis_ultimo = if_else(subgrupo,
+                                   weighted_ntile(renda_base, peso_comcalib, 10),
+                                   NA_integer_)) %>%
+  ungroup()
+
+# Cria a variável de divisão de renda com agrupamento desejado
+pnadc_receita_final <- pnadc_receita_final %>%
+  mutate(
+    divisao_renda = case_when(
+      quantis < 100 ~ as.character(quantis),
+      quantis == 100 & !is.na(subdecis_ultimo) & subdecis_ultimo <= 7 ~ "100.1-100.7",
+      quantis == 100 & subdecis_ultimo == 8 ~ "100.8",
+      quantis == 100 & subdecis_ultimo == 9 ~ "100.9",
+      quantis == 100 & subdecis_ultimo == 10 ~ "100.10",
+      TRUE ~ NA_character_  # Isso evita que entre NA onde nada for definido
+    )
+  )
+
+pnadc_receita_agg <- pnadc_receita_final %>%
+  group_by(divisao_renda) %>%
+  summarise(
+    Regime_Atual = sum((imposto_withholding + irpf_mensal_antigo) * peso_comcalib) / sum(renda_base * peso_comcalib) * 100,
+    Nova_Proposta = sum(imposto_calculado * peso_comcalib) / sum(renda_base * peso_comcalib) * 100
+  )
+
+
 df_long <- pnadc_receita_agg %>%
   pivot_longer(cols = c(Regime_Atual, Nova_Proposta),
                names_to = "Regime",
-               values_to = "Aliquota_Efetiva")
-df_long <- df_long %>% distinct()
-df_long <- df_long %>% filter(Aliquota_Efetiva>=0)
-# Ordena o eixo x
-quantis_numeric <- suppressWarnings(as.numeric(df_long$divisao_renda))
-ordem_quantis   <- sort(unique(quantis_numeric[!is.na(quantis_numeric)]))
-ordem_x         <- c(as.character(ordem_quantis), "Ricos", "Milionários")
+               values_to = "Aliquota_Efetiva") %>%
+  mutate(Regime = recode(Regime,
+                         "Regime_Atual" = "Regime Atual",
+                         "Nova_Proposta" = "Nova Proposta")) %>%
+  distinct() %>%
+  filter(Aliquota_Efetiva >= 0)
+
+# Ordenar eixo x
+ordem_x <- c(as.character(76:99), "100.1-100.7", "100.8", "100.9", "100.10")
+df_long <- df_long %>%
+  filter(divisao_renda %in% ordem_x)
+
 df_long$divisao_renda <- factor(df_long$divisao_renda, levels = ordem_x)
-df_long <- df_long %>% filter(!divisao_renda %in% as.character(1:75))
-# Plot
+
+
+# Adicionando marcacoes no grafico
+# Define os limites
+limite_100k <- 100000 / 1.16
+limite_50k  <- 50000 / 1.16
+
+# Identifica os grupos (divisao_renda) que contêm esses limites
+marcadores <- pnadc_receita_final %>%
+  filter(renda_base >= limite_50k) %>%
+  group_by(divisao_renda) %>%
+  summarise() %>%
+  pull(divisao_renda)
+
+ponto_50k <- pnadc_receita_final %>%
+  filter(renda_base >= limite_50k) %>%
+  arrange(renda_base) %>%
+  slice(1) %>%
+  pull(divisao_renda)
+
+ponto_100k <- pnadc_receita_final %>%
+  filter(renda_base >= limite_100k) %>%
+  arrange(renda_base) %>%
+  slice(1) %>%
+  pull(divisao_renda)
+
+
+
 p <- ggplot(df_long, aes(x = divisao_renda, y = Aliquota_Efetiva,
                          color = Regime, group = Regime)) +
-  geom_line(linewidth = 1.25) +
+  geom_line(linewidth = 1) +
   theme_bw() +
-  scale_color_manual(values = c("Regime_Atual" = "#3366ff", "Nova_Proposta" = "#eb52ff")) +
-  xlab("Posição na Distribuição de Renda (Mensal)") +
+  scale_color_manual(values = c("Regime Atual" = "#3366ff", "Nova Proposta" = "#eb52ff")) +
+  xlab("Posição na Distribuição de Renda") +
   ylab("Alíquota Efetiva (%)") +
   theme(axis.text.x = element_text(angle = 45, hjust = 1),
-        legend.position = "bottom")
+        legend.position = "bottom") +
+  geom_vline(xintercept = which(levels(df_long$divisao_renda) == ponto_50k),
+             linetype = "dashed", color = "darkgreen") +
+  geom_vline(xintercept = which(levels(df_long$divisao_renda) == ponto_100k),
+             linetype = "dashed", color = "red") +
+  annotate("text", x = which(levels(df_long$divisao_renda) == ponto_50k),
+           y = Inf, label = "R$ 50 mil mensais", vjust = 2, color = "darkgreen", angle = 90) +
+  annotate("text", x = which(levels(df_long$divisao_renda) == ponto_100k),
+           y = Inf, label = "R$ 100 mil mensais", vjust = 2, color = "red", angle = 90)
 
 print(p)
+
+ggsave("../figures/grafico_aliquota.png", plot = p, width = 10, height = 6, dpi = 300)
+
 
 
 # 7 - Simulação - Alíquota Máxima -----------------------------------------
@@ -266,26 +348,38 @@ graphAliMax <- pnadc_receita_final %>% group_by(divisao_renda) %>%
             Proposta_Aliquota_Maxima = sum(imposto_ali_max*peso_comcalib)/sum(renda_base*peso_comcalib)*100)
 pnadc_receita_final <- pnadc_receita_final %>% mutate('renda_pos_aliMax' = renda_base - imposto_ali_max)
 
-# Converte para formato longo
+# Converte para formato longo e renomeia os regimes
 df_long <- graphAliMax %>%
-  pivot_longer(cols = c(Regime_Atual, Nova_Proposta,Proposta_Aliquota_Maxima),
+  pivot_longer(cols = c(Regime_Atual, Nova_Proposta, Proposta_Aliquota_Maxima),
                names_to = "Regime",
-               values_to = "Aliquota_Efetiva")
-df_long <- df_long %>% distinct()
-df_long <- df_long %>% filter(Aliquota_Efetiva>=0)
+               values_to = "Aliquota_Efetiva") %>%
+  mutate(Regime = case_when(
+    Regime == "Regime_Atual" ~ "Regime Atual",
+    Regime == "Nova_Proposta" ~ "Nova Proposta",
+    Regime == "Proposta_Aliquota_Maxima" ~ "Proposta Progressiva",
+    TRUE ~ Regime
+  )) %>%
+  distinct() %>%
+  filter(Aliquota_Efetiva >= 0)
+
 # Ordena o eixo x
 quantis_numeric <- suppressWarnings(as.numeric(df_long$divisao_renda))
 ordem_quantis   <- sort(unique(quantis_numeric[!is.na(quantis_numeric)]))
 ordem_x         <- c(as.character(ordem_quantis), "Ricos", "Milionários")
 df_long$divisao_renda <- factor(df_long$divisao_renda, levels = ordem_x)
 df_long <- df_long %>% filter(!divisao_renda %in% as.character(1:75))
+
 # Plot
 pAliMax <- ggplot(df_long, aes(x = divisao_renda, y = Aliquota_Efetiva,
-                         color = Regime, group = Regime)) +
+                               color = Regime, group = Regime)) +
   geom_line(linewidth = 1.25) +
   theme_bw() +
-  scale_color_manual(values = c("Regime_Atual" = "#3366ff", "Nova_Proposta" = "#eb52ff", "Proposta_Aliquota_Maxima"="#feff41")) +
-  xlab("Posição na Distribuição de Renda (Mensal)") +
+  scale_color_manual(values = c(
+    "Regime Atual" = "#3366ff",
+    "Nova Proposta" = "#eb52ff",
+    "Proposta Progressiva" = "#FFC107"  # amarelo forte
+  )) +
+  xlab("Posição na Distribuição de Renda") +
   ylab("Alíquota Efetiva (%)") +
   theme(axis.text.x = element_text(angle = 45, hjust = 1),
         legend.position = "bottom")
@@ -335,19 +429,19 @@ dif_arrec_aliMax <- irpf_total_aliMax - irpf_total_atual
 ## Regime atual
 gini_atual <- StatsGini(pnadc_receita_final$renda_pos_atual, pnadc_receita_final$peso_comcalib)
 bottom50_atual <- Bottom_Aprop(pnadc_receita_final$renda_pos_atual, pnadc_receita_final$peso_comcalib, 50)
-top9_atual <- Top_Aprop(pnadc_receita_final$renda_pos_atual, pnadc_receita_final$peso_comcalib, 91)
+top10_atual <- Top_Aprop(pnadc_receita_final$renda_pos_atual, pnadc_receita_final$peso_comcalib, 90)
 top1_atual <- Top_Aprop(pnadc_receita_final$renda_pos_atual, pnadc_receita_final$peso_comcalib, 99)
 
 ## Nova proposta original
 gini_novo <- StatsGini(pnadc_receita_final$renda_pos_novo, pnadc_receita_final$peso_comcalib)
 bottom50_novo <- Bottom_Aprop(pnadc_receita_final$renda_pos_novo, pnadc_receita_final$peso_comcalib, 50)
-top9_novo <- Top_Aprop(pnadc_receita_final$renda_pos_novo, pnadc_receita_final$peso_comcalib, 91)
+top10_novo <- Top_Aprop(pnadc_receita_final$renda_pos_novo, pnadc_receita_final$peso_comcalib, 90)
 top1_novo <- Top_Aprop(pnadc_receita_final$renda_pos_novo, pnadc_receita_final$peso_comcalib, 99)
 
 ## Nova com alíquota máxima estendida
 gini_aliMax <- StatsGini(pnadc_receita_final$renda_pos_aliMax, pnadc_receita_final$peso_comcalib)
 bottom50_aliMax <- Bottom_Aprop(pnadc_receita_final$renda_pos_aliMax, pnadc_receita_final$peso_comcalib, 50)
-top9_aliMax <- Top_Aprop(pnadc_receita_final$renda_pos_aliMax, pnadc_receita_final$peso_comcalib, 91)
+top10_aliMax <- Top_Aprop(pnadc_receita_final$renda_pos_aliMax, pnadc_receita_final$peso_comcalib, 90)
 top1_aliMax <- Top_Aprop(pnadc_receita_final$renda_pos_aliMax, pnadc_receita_final$peso_comcalib, 99)
 
 # Tabela final
@@ -355,7 +449,7 @@ tabela_resultados <- data.frame(
   Cenário = c("Regime Atual", "Nova Proposta", "Nova c/ Aliq. Máxima"),
   Gini = c(gini_atual, gini_novo, gini_aliMax),
   Bottom_50 = c(bottom50_atual, bottom50_novo, bottom50_aliMax),
-  Top_9 = c(top9_atual, top9_novo, top9_aliMax),
+  Top_10 = c(top10_atual, top10_novo, top10_aliMax),
   Top_1 = c(top1_atual, top1_novo, top1_aliMax),
   Arrecadacao_BR = c(irpf_total_atual, irpf_total_novo, irpf_total_aliMax),
   Dif_Arrecadacao_BR = c(0, dif_arrec_novo, dif_arrec_aliMax)
@@ -458,7 +552,7 @@ ggplot(df_aprop, aes(x = centil, y = prop_renda, color = Cenário)) +
   scale_color_manual(values = c(
     "Regime Atual" = "#3366ff",
     "Nova Proposta" = "#eb52ff",
-    "Nova c/ Aliq. Máxima" = "#feff41"
+    "Nova c/ Aliq. Máxima" = "#FFC107" 
   )) +
   labs(
     title = "Apropriação da Renda por Centil",
@@ -470,6 +564,35 @@ ggplot(df_aprop, aes(x = centil, y = prop_renda, color = Cenário)) +
   theme(legend.position = "bottom")
 
 ggsave("../figures/apropriacao_renda_por_centil.png", width = 8, height = 5, dpi = 300)
+
+
+
+# Filtra a partir do centil 85
+df_aprop_filtrado <- df_aprop %>% filter(centil >= 85)
+
+# Gráfico
+ggplot(df_aprop_filtrado, aes(x = centil, y = prop_renda, color = Cenário)) +
+  geom_line(linewidth = 0.4) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 0.1)) +
+  scale_color_manual(values = c(
+    "Regime Atual" = "#3366ff",
+    "Nova Proposta" = "#eb52ff",
+    "Nova c/ Aliq. Máxima" = "#FFC107"
+  )) +
+  labs(
+    title = "Apropriação da Renda a partir do Centil 85",
+    x = "Centil de Renda",
+    y = "Proporção da Renda Total (%)",
+    color = "Cenário"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "bottom")
+
+# Salva a figura
+ggsave("../figures/apropriacao_renda_top15.png", width = 8, height = 5, dpi = 300)
+
+
+
 
 #Curva de apropriacao acumulada:
 
