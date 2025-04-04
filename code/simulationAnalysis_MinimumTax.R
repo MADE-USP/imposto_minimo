@@ -150,12 +150,13 @@ pnadc_receita_final <- pnadc_receita_final %>%
 
 pnadc_receita_final <- pnadc_receita_final %>% mutate(aliquota_pre_ricos = (imposto_withholding+irpf_mensal_novo)/renda_base)
 pnadc_receita_final <- pnadc_receita_final %>% mutate(base_tax = imposto_withholding+irpf_mensal_novo)
+
 # Aplica complemento para altas rendas:
 imposto_final <- function(base_tax,renda){
   if (renda <= 50000/1.16) {
     return(base_tax)
   } else if (renda < 100000/1.16) {
-    desired_tax <- (((renda * 12 / 60000/1.16 - 10)))/100 * renda
+    desired_tax <- ((((renda * 12 / 60000/1.16 - 10)))/100) * renda
     return(max(base_tax, desired_tax))
   } else {  # Caso renda >= 100
     desired_tax <- (0.10) * renda
@@ -163,6 +164,134 @@ imposto_final <- function(base_tax,renda){
   }
 }
 
+
+
+pnadc_receita_final <- pnadc_receita_final %>%
+  mutate(
+    aliquota_minima = case_when(
+      renda_base <= 50000 / 1.16 ~ 0,
+      
+      renda_base < 100000 / 1.16 ~ {
+        desired_tax <- (((renda_base * 12 / (60000 / 1.16)) - 10)) / 100
+        pmax(0, desired_tax)
+      },
+      
+      TRUE ~ 0.10  # Para renda >= 100 mil
+    )
+  )
+
+pnadc_receita_final <- pnadc_receita_final %>%
+  mutate(
+    aliquota_efetiva_atual = base_tax / renda_base
+  )
+
+
+
+limite_50k <- 50000 / 1.16
+
+df_plot <- pnadc_receita_final %>%
+  filter(renda_base > limite_50k) %>%
+  select(renda_base, aliquota_minima, aliquota_efetiva_atual) %>%
+  pivot_longer(cols = c(aliquota_minima, aliquota_efetiva_atual),
+               names_to = "Tipo",
+               values_to = "Aliquota")
+
+
+
+library(ggplot2)
+
+ggplot(df_plot, aes(x = renda_base, y = Aliquota, color = Tipo)) +
+  geom_line(alpha = 0.4) +
+  geom_smooth(se = FALSE, method = "loess", formula = y ~ x, span = 0.3) +
+  scale_color_manual(values = c("aliquota_minima" = "#eb52ff", 
+                                "aliquota_efetiva_atual" = "#3366ff"),
+                     labels = c("Alíquota Mínima", "Alíquota Efetiva Atual")) +
+  labs(
+    x = "Renda Mensal (R$)",
+    y = "Alíquota Efetiva (%)",
+    color = "Tipo de Alíquota"
+  ) +
+  theme_minimal()
+
+
+
+
+
+
+
+
+
+
+
+
+pnadc_receita_final$quantis <- weighted_ntile(pnadc_receita_final$renda_base,
+                                              pnadc_receita_final$peso_comcalib, 100)
+
+
+pnadc_receita_final <- pnadc_receita_final %>%
+  group_by(subgrupo = quantis == 100) %>%
+  mutate(subdecil_topo = if_else(subgrupo,
+                                 weighted_ntile(renda_base, peso_comcalib, 10),
+                                 NA_integer_)) %>%
+  ungroup()
+
+
+
+pnadc_receita_final <- pnadc_receita_final %>%
+  mutate(
+    aliquota_minima = case_when(
+      renda_base <= 50000 / 1.16 ~ 0,
+      
+      renda_base < 100000 / 1.16 ~ {
+        desired_tax <- (((renda_base * 12 / (60000 / 1.16)) - 10)) / 100
+        pmax(0, desired_tax)
+      },
+      
+      TRUE ~ 0.10  # Para renda >= 100 mil
+    )
+  )
+
+pnadc_receita_final <- pnadc_receita_final %>%
+  mutate(
+    aliquota_efetiva_atual = base_tax / renda_base
+  )
+
+
+
+df_top1 <- pnadc_receita_final %>%
+  filter(quantis == 100) %>%
+  group_by(subdecil_topo) %>%
+  summarise(
+    aliquota_minima_media = weighted.mean(aliquota_minima, peso_comcalib, na.rm = TRUE),
+    aliquota_efetiva_media = weighted.mean(aliquota_efetiva_atual, peso_comcalib, na.rm = TRUE)
+  ) %>%
+  mutate(decis_top1 = paste0("100.", subdecil_topo)) %>%
+  select(decis_top1, aliquota_minima_media, aliquota_efetiva_media)
+
+df_long <- df_top1 %>%
+  pivot_longer(cols = c(aliquota_minima_media, aliquota_efetiva_media),
+               names_to = "Tipo",
+               values_to = "Aliquota") %>%
+  mutate(
+    Tipo = recode(Tipo,
+                  "aliquota_minima_media" = "Alíquota Mínima",
+                  "aliquota_efetiva_media" = "Alíquota Efetiva Atual"),
+    decis_top1 = factor(decis_top1, levels = paste0("100.", 1:10))
+  )
+
+ggplot(df_long, aes(x = decis_top1, y = Aliquota, color = Tipo, group = Tipo)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 2) +
+  scale_color_manual(values = c("Alíquota Mínima" = "#eb52ff", 
+                                "Alíquota Efetiva Atual" = "#3366ff")) +
+  labs(
+    x = "Subdecis do Topo 1%",
+    y = "Alíquota Efetiva (%)",
+    color = "Tipo de Alíquota"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "bottom")
 
 # 4 - Aplica Imposto e Calcula Arrecadação --------------------------------
 
@@ -229,10 +358,6 @@ pnadc_receita_agg <- pnadc_receita_final %>% group_by(divisao_renda) %>%
 
 
 ##### Abrindo ultimo decil:
-
-pnadc_receita_final$quantis <- weighted_ntile(pnadc_receita_final$renda_base,
-                                              pnadc_receita_final$peso_comcalib, 100)
-
 
 # Calcula centis
 pnadc_receita_final$quantis <- weighted_ntile(pnadc_receita_final$renda_base,
