@@ -669,6 +669,7 @@ df_aliMax <- apropriacao_por_centil(pnadc_receita_final$renda_pos_aliMax,
                                     "Nova c/ Aliq. Máxima")
 
 # Junta tudo
+# Faz gráficos de apropriação
 df_aprop <- bind_rows(df_atual, df_novo, df_aliMax)
 
 ggplot(df_aprop, aes(x = centil, y = prop_renda, color = Cenário)) +
