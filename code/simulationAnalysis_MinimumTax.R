@@ -15,7 +15,10 @@ library(tidyr)
 library(scales)
 library(this.path)
 library(writexl)
+library(readxl)
+library(forcats)
 setwd(this.dir())
+
 
 cores_made <- c("#45ff66", "#eb52ff", "#3366ff","#feff41")
 load('../data/baseRendimentosIsentosPlrAdj.Rda')
@@ -165,7 +168,7 @@ imposto_final <- function(base_tax,renda){
 }
 
 
-
+## Aliquota média no topo:
 pnadc_receita_final <- pnadc_receita_final %>%
   mutate(
     aliquota_minima = case_when(
@@ -189,41 +192,6 @@ pnadc_receita_final <- pnadc_receita_final %>%
 
 limite_50k <- 50000 / 1.16
 
-df_plot <- pnadc_receita_final %>%
-  filter(renda_base > limite_50k) %>%
-  select(renda_base, aliquota_minima, aliquota_efetiva_atual) %>%
-  pivot_longer(cols = c(aliquota_minima, aliquota_efetiva_atual),
-               names_to = "Tipo",
-               values_to = "Aliquota")
-
-
-
-library(ggplot2)
-
-ggplot(df_plot, aes(x = renda_base, y = Aliquota, color = Tipo)) +
-  geom_line(alpha = 0.4) +
-  geom_smooth(se = FALSE, method = "loess", formula = y ~ x, span = 0.3) +
-  scale_color_manual(values = c("aliquota_minima" = "#eb52ff", 
-                                "aliquota_efetiva_atual" = "#3366ff"),
-                     labels = c("Alíquota Mínima", "Alíquota Efetiva Atual")) +
-  labs(
-    x = "Renda Mensal (R$)",
-    y = "Alíquota Efetiva (%)",
-    color = "Tipo de Alíquota"
-  ) +
-  theme_minimal()
-
-
-
-
-
-
-
-
-
-
-
-
 pnadc_receita_final$quantis <- weighted_ntile(pnadc_receita_final$renda_base,
                                               pnadc_receita_final$peso_comcalib, 100)
 
@@ -234,8 +202,6 @@ pnadc_receita_final <- pnadc_receita_final %>%
                                  weighted_ntile(renda_base, peso_comcalib, 10),
                                  NA_integer_)) %>%
   ungroup()
-
-
 
 pnadc_receita_final <- pnadc_receita_final %>%
   mutate(
@@ -255,7 +221,6 @@ pnadc_receita_final <- pnadc_receita_final %>%
   mutate(
     aliquota_efetiva_atual = base_tax / renda_base
   )
-
 
 
 df_top1 <- pnadc_receita_final %>%
@@ -279,11 +244,23 @@ df_long <- df_top1 %>%
     decis_top1 = factor(decis_top1, levels = paste0("100.", 1:10))
   )
 
-ggplot(df_long, aes(x = decis_top1, y = Aliquota, color = Tipo, group = Tipo)) +
+# Garante que a sequência tem 10 valores
+valores_topo <- seq(1, 0.1, length.out = 10)
+
+new_labels <- setNames(
+  sprintf("%.1f", valores_topo),
+  sprintf("100.%d", 1:10)
+)
+
+# Gera o gráfico com os novos rótulos e Alíquota em %
+grafico <- ggplot(df_long, aes(x = factor(decis_top1, levels = sprintf("100.%d", 1:10)), 
+                               y = Aliquota * 100, color = Tipo, group = Tipo)) +
   geom_line(linewidth = 1.2) +
   geom_point(size = 2) +
   scale_color_manual(values = c("Alíquota Mínima" = "#eb52ff", 
                                 "Alíquota Efetiva Atual" = "#3366ff")) +
+  scale_x_discrete(labels = new_labels) +
+  scale_y_continuous(breaks = seq(0, 12, by = 2)) +
   labs(
     x = "Subdecis do Topo 1%",
     y = "Alíquota Efetiva (%)",
@@ -293,10 +270,16 @@ ggplot(df_long, aes(x = decis_top1, y = Aliquota, color = Tipo, group = Tipo)) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1),
         legend.position = "bottom")
 
+# Salva o gráfico
+ggsave("../figures/grafico_aliquotas.png", plot = grafico, width = 8, height = 6, dpi = 300)
+
+
 # 4 - Aplica Imposto e Calcula Arrecadação --------------------------------
 
 pnadc_receita_final <- pnadc_receita_final %>%
   mutate(imposto_calculado = pmap_dbl(list(base_tax, renda_base), imposto_final))
+
+pnadc_receita_final$renda_base
 
 
 irpf_total_atual <- 1.16 * 12* sum(pnadc_receita_final$peso_comcalib * (pnadc_receita_final$irpf_mensal_antigo+pnadc_receita_final$imposto_withholding)) / 1e9
@@ -435,7 +418,6 @@ ponto_100k <- pnadc_receita_final %>%
   pull(divisao_renda)
 
 
-
 p <- ggplot(df_long, aes(x = divisao_renda, y = Aliquota_Efetiva,
                          color = Regime, group = Regime)) +
   geom_line(linewidth = 1) +
@@ -450,10 +432,11 @@ p <- ggplot(df_long, aes(x = divisao_renda, y = Aliquota_Efetiva,
   geom_vline(xintercept = which(levels(df_long$divisao_renda) == ponto_100k),
              linetype = "dashed", color = "red") +
   annotate("text", x = which(levels(df_long$divisao_renda) == ponto_50k),
-           y = Inf, label = "R$ 50 mil mensais", vjust = 2, color = "darkgreen", angle = 90) +
+           y = 5, label = "R$ 50 mil", vjust = 0, color = "darkgreen",
+           angle = 90, size = 4) +
   annotate("text", x = which(levels(df_long$divisao_renda) == ponto_100k),
-           y = Inf, label = "R$ 100 mil mensais", vjust = 2, color = "red", angle = 90)
-
+           y = 5, label = "R$ 100 mil", vjust = 0, color = "red",
+           angle = 90, size = 4)
 print(p)
 
 ggsave("../figures/grafico_aliquota.png", plot = p, width = 10, height = 6, dpi = 300)
@@ -464,7 +447,7 @@ ggsave("../figures/grafico_aliquota.png", plot = p, width = 10, height = 6, dpi 
 
 aliMax <- max(pnadc_receita_agg$Nova_Proposta)/100
 
-pnadc_receita_final <- pnadc_receita_final %>% mutate(imposto_ali_max = if_else(divisao_renda %in% c("100", "Ricos", "Milionários"), 
+pnadc_receita_final <- pnadc_receita_final %>% mutate(imposto_ali_max = if_else(divisao_renda %in% c("100.10", "100.9", "100.8", "100.1-100.7"), 
                                                                                 aliMax*renda_base, imposto_calculado))
 
 graphAliMax <- pnadc_receita_final %>% group_by(divisao_renda) %>%  
@@ -490,7 +473,16 @@ df_long <- graphAliMax %>%
 # Ordena o eixo x
 quantis_numeric <- suppressWarnings(as.numeric(df_long$divisao_renda))
 ordem_quantis   <- sort(unique(quantis_numeric[!is.na(quantis_numeric)]))
-ordem_x         <- c(as.character(ordem_quantis), "Ricos", "Milionários")
+# Cria vetor com os quantis de 76 a 99
+ordem_quantis <- 76:99
+
+# Define os níveis finais manuais
+extremos <- c("100.1-100.7", "100.8", "100.9", "100.10")
+
+# Combina a ordem correta do eixo x
+ordem_x <- c(as.character(ordem_quantis), extremos)
+
+# Aplica a ordenação à variável
 df_long$divisao_renda <- factor(df_long$divisao_renda, levels = ordem_x)
 df_long <- df_long %>% filter(!divisao_renda %in% as.character(1:75))
 
@@ -512,9 +504,8 @@ pAliMax <- ggplot(df_long, aes(x = divisao_renda, y = Aliquota_Efetiva,
 print(pAliMax)
 
 
+ggsave("../figures/grafico_proposta.png", plot = pAliMax, width = 10, height = 6, dpi = 300)
 
-###############################################################################################
-                                  ######### GKM ###########
 
 # Cria coluna auxiliar com alíquota efetiva apenas para cálculo do limite
 pnadc_receita_final <- pnadc_receita_final %>%
@@ -554,20 +545,20 @@ dif_arrec_aliMax <- irpf_total_aliMax - irpf_total_atual
 ## Regime atual
 gini_atual <- StatsGini(pnadc_receita_final$renda_pos_atual, pnadc_receita_final$peso_comcalib)
 bottom50_atual <- Bottom_Aprop(pnadc_receita_final$renda_pos_atual, pnadc_receita_final$peso_comcalib, 50)
-top10_atual <- Top_Aprop(pnadc_receita_final$renda_pos_atual, pnadc_receita_final$peso_comcalib, 90)
-top1_atual <- Top_Aprop(pnadc_receita_final$renda_pos_atual, pnadc_receita_final$peso_comcalib, 99)
+top10_atual <- Top_Aprop(pnadc_receita_final$renda_pos_atual, pnadc_receita_final$peso_comcalib, 91)
+top1_atual <- Top_Aprop(pnadc_receita_final$renda_pos_atual, pnadc_receita_final$peso_comcalib, 100)
 
 ## Nova proposta original
 gini_novo <- StatsGini(pnadc_receita_final$renda_pos_novo, pnadc_receita_final$peso_comcalib)
 bottom50_novo <- Bottom_Aprop(pnadc_receita_final$renda_pos_novo, pnadc_receita_final$peso_comcalib, 50)
-top10_novo <- Top_Aprop(pnadc_receita_final$renda_pos_novo, pnadc_receita_final$peso_comcalib, 90)
-top1_novo <- Top_Aprop(pnadc_receita_final$renda_pos_novo, pnadc_receita_final$peso_comcalib, 99)
+top10_novo <- Top_Aprop(pnadc_receita_final$renda_pos_novo, pnadc_receita_final$peso_comcalib, 91)
+top1_novo <- Top_Aprop(pnadc_receita_final$renda_pos_novo, pnadc_receita_final$peso_comcalib, 100)
 
 ## Nova com alíquota máxima estendida
 gini_aliMax <- StatsGini(pnadc_receita_final$renda_pos_aliMax, pnadc_receita_final$peso_comcalib)
 bottom50_aliMax <- Bottom_Aprop(pnadc_receita_final$renda_pos_aliMax, pnadc_receita_final$peso_comcalib, 50)
-top10_aliMax <- Top_Aprop(pnadc_receita_final$renda_pos_aliMax, pnadc_receita_final$peso_comcalib, 90)
-top1_aliMax <- Top_Aprop(pnadc_receita_final$renda_pos_aliMax, pnadc_receita_final$peso_comcalib, 99)
+top10_aliMax <- Top_Aprop(pnadc_receita_final$renda_pos_aliMax, pnadc_receita_final$peso_comcalib, 91)
+top1_aliMax <- Top_Aprop(pnadc_receita_final$renda_pos_aliMax, pnadc_receita_final$peso_comcalib, 100)
 
 # Tabela final
 tabela_resultados <- data.frame(
@@ -680,7 +671,6 @@ ggplot(df_aprop, aes(x = centil, y = prop_renda, color = Cenário)) +
     "Nova c/ Aliq. Máxima" = "#FFC107" 
   )) +
   labs(
-    title = "Apropriação da Renda por Centil",
     x = "Centil de Renda",
     y = "Proporção da Renda Total (%)",
     color = "Cenário"
@@ -765,3 +755,81 @@ ggplot(df_aprop_acumulada %>% filter(Cenário != "Regime Atual"), aes(x = centil
   theme_minimal(base_size = 13) +
   theme(legend.position = "bottom")
 
+
+
+# WID dados:
+
+# Limpa o ambiente
+rm(list = ls())
+
+# Lê a base
+wil <- read_excel("~/Documents/GitHub/imposto_minimo/data/wil.xlsx")
+
+# Renomeia coluna para Apropriação
+df_filtrado <- wil %>%
+  rename(País = 1, Apropriação = 2)
+
+# Lista final de países a manter no gráfico
+paises_selecionados <- c(
+  "Brasil", "Brasil Pos-Reforma",
+  "USA", "Germany", "France", "United Kingdom", "Italy", "Spain",
+  "Netherlands", "Sweden", "Norway", "Denmark",
+  "Japan", "South Korea", "New Zealand", "Portugal", "Poland",
+  "Chile", "Colombia", "Uruguay", "Peru", "Bolivia", "Paraguay", "Guatemala",
+  "South Africa", "China", "Indonesia", "Pakistan", "Bangladesh",
+  "Sri Lanka", "Nepal", "Russia", "Kazakhstan", "Iran", "Egypt",
+  "Kenya", "Nigeria", "Ghana", "Uganda", "Mozambique"
+)
+
+# Filtra países
+df_filtrado <- df_filtrado %>%
+  filter(País %in% paises_selecionados)
+
+# Define países desenvolvidos
+desenvolvidos <- c(
+  "USA", "Germany", "France", "United Kingdom", "Italy", "Spain",
+  "Netherlands", "Sweden", "Norway", "Denmark",
+  "Japan", "South Korea", "New Zealand", "Portugal", "Poland"
+)
+
+# Classificação final
+df_filtrado <- df_filtrado %>%
+  mutate(
+    grupo_renda = case_when(
+      País == "Brasil" ~ "Brasil",
+      País == "Brasil Pos-Reforma" ~ "Brasil Pós-Reforma",
+      País %in% desenvolvidos ~ "Países desenvolvidos",
+      TRUE ~ "Países em desenvolvimento"
+    )
+  )
+
+# Ordena os países por Apropriação
+df_filtrado <- df_filtrado %>%
+  arrange(desc(Apropriação)) %>%
+  mutate(País = factor(País, levels = unique(País)))
+
+# Cores
+cores <- c(
+  "Brasil" = "#3366ff",
+  "Brasil Pós-Reforma" = "#eb52ff",
+  "Países desenvolvidos" = "grey80",
+  "Países em desenvolvimento" = "grey50"
+)
+
+# Gráfico
+grafico_apropriacao <- ggplot(df_filtrado, aes(x = Apropriação, y = País, fill = grupo_renda)) +
+  geom_col() +
+  scale_fill_manual(
+    values = cores,
+    name = "Grupo de País"
+  ) +
+  xlab("Apropriação pelo Topo 1% (%)") +
+  ylab(NULL) +
+  theme_minimal() +
+  theme(
+    axis.text.y = element_text(size = 9),
+    legend.position = "bottom"
+  )
+
+# Salva como PNG
+ggsave("../figures/grafico_apropriacao_WID.png", plot = grafico_apropriacao, width = 10, height = 8, dpi = 300)
