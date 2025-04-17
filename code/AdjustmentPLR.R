@@ -27,5 +27,9 @@ pnad_ricos_centesimo <- pnad_ricos_centesimo %>% group_by(centesimoReceita) %>% 
 pnad_ricos_centesimo <- pnad_ricos_centesimo %>% select(c(id_ind, plr_distribuido))
 pnadc_receita_final <- pnadc_receita_final %>% left_join(pnad_ricos_centesimo, by="id_ind")
 pnadc_receita_final <- pnadc_receita_final %>% mutate(plr_distribuido = replace_na(plr_distribuido,0))
+
+rb8 <- readRDS('../data/colunasRB8.Rds')
+rb8 <- rb8 %>% select(c("id_ind", "RB8"))
+pnadc_receita_final <- pnadc_receita_final %>% left_join(rb8, by = "id_ind")
 save(pnadc_receita_final, file = "../data/baseRendimentosIsentosPlrAdj.Rda")
 
