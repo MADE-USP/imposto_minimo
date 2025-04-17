@@ -141,7 +141,9 @@ calcula_irpf_mensal_novo <- function(renda) {
   }
 }
 
-pnadc_receita_final$base_c <- coalesce(pnadc_receita_final$`Base de Cálculo`, 0)
+pnadc_receita_final$base_c_rb4 <- coalesce(pnadc_receita_final$`Base de Cálculo`, 0)
+pnadc_receita_final$base_c_rb8 <- coalesce(pnadc_receita_final$RB8, 0)
+pnadc_receita_final$base_c <- if_else(pnadc_receita_final$base_c_rb8<=7000, pnadc_receita_final$base_c_rb8, pnadc_receita_final$base_c_rb4)
 
 pnadc_receita_final <- pnadc_receita_final %>%
   mutate(
@@ -485,7 +487,7 @@ ordem_x <- c(as.character(ordem_quantis), extremos)
 # Aplica a ordenação à variável
 df_long$divisao_renda <- factor(df_long$divisao_renda, levels = ordem_x)
 df_long <- df_long %>% filter(!divisao_renda %in% as.character(1:75))
-
+df_long <- df_long %>% filter(!is.na(divisao_renda))
 # Plot
 pAliMax <- ggplot(df_long, aes(x = divisao_renda, y = Aliquota_Efetiva,
                                color = Regime, group = Regime)) +
@@ -759,11 +761,8 @@ ggplot(df_aprop_acumulada %>% filter(Cenário != "Regime Atual"), aes(x = centil
 
 # WID dados:
 
-# Limpa o ambiente
-rm(list = ls())
-
 # Lê a base
-wil <- read_excel("~/Documents/GitHub/imposto_minimo/data/wil.xlsx")
+wil <- read_excel("../data/wil.xlsx")
 
 # Renomeia coluna para Apropriação
 df_filtrado <- wil %>%
