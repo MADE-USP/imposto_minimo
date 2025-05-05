@@ -24,18 +24,28 @@ cores_made <- c("#45ff66", "#eb52ff", "#3366ff","#feff41")
 load('../data/baseRendimentosIsentosPlrAdj.Rda')
 
 
-# 1 - Parâmetros de Faixas e Alíquotas (Regime Atual) -------------------------
+# 1 - Parâmetros de Faixas, Alíquotas e Despesas Dedutíveis (Regime Atual) -------------------------
 
-faixa1 <- 2259.20/1.16
-faixa2 <- 2826.65/1.16
-faixa3 <- 3751.05/1.16
-faixa4 <- 4664.68/1.16
+faixa1 <- 3036/1.16
+faixa2 <- 3533.31/1.16
+faixa3 <- 4688.85/1.16
+faixa4 <- 5830.85/1.16
 
 aliquota1 <- 0.075
 aliquota2 <- 0.15
 aliquota3 <- 0.225   
 aliquota4 <- 0.275  
 
+despesas_dedutiveis <- c(
+  "Previdência Oficial",
+  "Previdência RRA",
+  "Previdência Privada",
+  "Dependentes",
+  "Instrução",
+  "Despesas Médicas",
+  "Pensão Alimentícia",
+  "Livro-Caixa"
+)
 
 # 2 - Função IR Mensal (Regime Atual) -------------------------------------
 
