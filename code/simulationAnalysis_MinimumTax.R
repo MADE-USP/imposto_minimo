@@ -137,30 +137,34 @@ pnadc_receita_final <- pnadc_receita_final %>% mutate(imposto_withholding = repl
 #    - Até 5k isento
 #    - 5k a 7k: redução linear
 #    - Acima de 7k: sem abatimento adicional
+pnadc_receita_final <- pnadc_receita_final %>%
+  mutate(across(all_of(despesas_dedutiveis), ~ replace_na(., 0)),
+         despesas_dedutiveis_tot = rowSums(across(all_of(despesas_dedutiveis))))
+pnadc_receita_final <- pnadc_receita_final %>% mutate(`Rendimento Tributável` = replace_na(`Rendimento Tributável`,0))
+pnadc_receita_final <- pnadc_receita_final %>% 
+  mutate(base_c_hip = pmax(pmin((`Rendimento Tributável` - despesas_dedutiveis_tot), 0.8*`Rendimento Tributável`),0))
 
-
-calcula_irpf_mensal_novo <- function(renda) {
+calcula_irpf_mensal_novo <- function(renda, rendimento_tributavel) {
   # Primeiro, calcula o imposto base conforme a redução até 7.000
   if (renda <= 5000/1.16) {
     base_tax <- 0
   } else if (renda <= 7000/1.16) {
-    reducao <- 1095.11 - 0.156445 * renda
+    reducao <- 1095.11 - 0.156445 * rendimento_tributavel
     base_tax <- max(calcula_irpf_mensal_antigo(renda) - reducao, 0)
   } else {
     base_tax <- calcula_irpf_mensal_antigo(renda)
   }
 }
-
 pnadc_receita_final$base_c_rb4 <- coalesce(pnadc_receita_final$`Base de Cálculo`, 0)
 pnadc_receita_final$base_c_rb8 <- coalesce(pnadc_receita_final$RB8, 0)
-pnadc_receita_final$base_c <- if_else(pnadc_receita_final$base_c_rb8<=7000, pnadc_receita_final$base_c_rb8, pnadc_receita_final$base_c_rb4)
+pnadc_receita_final$base_c <- if_else(pnadc_receita_final$base_c_rb8<=5000/1.16, pnadc_receita_final$base_c_rb8, pnadc_receita_final$base_c_hip)
 
 pnadc_receita_final <- pnadc_receita_final %>%
   mutate(
     # IR mensal no regime antigo
     irpf_mensal_antigo = map_dbl(base_c, calcula_irpf_mensal_antigo),
     # IR mensal com isenção/redução até 7k
-    irpf_mensal_novo = map_dbl(base_c, calcula_irpf_mensal_novo)
+    irpf_mensal_novo = map2_dbl(base_c,`Rendimento Tributável`, calcula_irpf_mensal_novo)
   )
 
 pnadc_receita_final <- pnadc_receita_final %>% mutate(aliquota_pre_ricos = (imposto_withholding+irpf_mensal_novo)/renda_base)
