@@ -1,7 +1,6 @@
 gc()
 rm(list=ls())
 
-
 # 0 - Imports e Carregamento da Base --------------------------------------
 
 library(haven)
@@ -19,40 +18,33 @@ library(readxl)
 library(forcats)
 setwd(this.dir())
 
-
-cores_made <- c("#45ff66", "#eb52ff", "#3366ff","#feff41")
+cores_made <- c("#45ff66", "#eb52ff", "#3366ff", "#feff41")
 load('../data/baseRendimentosIsentosPlrAdj.Rda')
 
 # 0 - Ajustando os valores da base pela inflação ------------------------------
 
-inflaciona <- function(var){
-  (var*1.16)
+inflaciona <- function(var) {
+  (var * 1.16)
 }
 
-pnadc_receita_final <- pnadc_receita_final %>% mutate(across(.cols = c(rendimento_todasfontes,rendimento_todasfontes_calibrado,`Renda Total`:`Dívida`),
-                                                             .fns = inflaciona))
+pnadc_receita_final <- pnadc_receita_final %>%
+  mutate(across(.cols = c(rendimento_todasfontes, rendimento_todasfontes_calibrado, `Renda Total`:`Dívida`), .fns = inflaciona))
 
-# 1 - Parâmetros de Faixas, Alíquotas e Despesas Dedutíveis (Regime Atual) -------------------------
+# 1 - Parâmetros de Faixas, Alíquotas e Despesas Dedutíveis ---------------------
 
-faixa1 <- 3036
-faixa2 <- 3533.31
-faixa3 <- 4688.85
-faixa4 <- 5830.85
+faixa1 <- 2428
+faixa2 <- 2826.65
+faixa3 <- 3751.05
+faixa4 <- 4664.68
 
 aliquota1 <- 0.075
 aliquota2 <- 0.15
-aliquota3 <- 0.225   
-aliquota4 <- 0.275  
+aliquota3 <- 0.225
+aliquota4 <- 0.275
 
 despesas_dedutiveis <- c(
-  "Previdência Oficial",
-  "Previdência RRA",
-  "Previdência Privada",
-  "Dependentes",
-  "Instrução",
-  "Despesas Médicas",
-  "Pensão Alimentícia",
-  "Livro-Caixa"
+  "Previdência Oficial", "Previdência RRA", "Previdência Privada",
+  "Dependentes", "Instrução", "Despesas Médicas", "Pensão Alimentícia", "Livro-Caixa"
 )
 
 # 2 - Função IR Mensal (Regime Atual) -------------------------------------
@@ -79,23 +71,19 @@ tax_table_plr <- data.frame(
   upper = c(6677.55, 9922.28, 13167, 16380.38, Inf),
   rate = c(0, 0.075, 0.15, 0.225, 0.275)
 )
+
 tax_table <- data.frame(
   lower = c(0, faixa1, faixa2, faixa3, faixa4),
   upper = c(faixa1, faixa2, faixa3, faixa4, Inf),
   rate = c(0, 0.075, 0.15, 0.225, 0.275)
 )
 
-
-
-# Função para calcular o imposto devido com base no valor bruto e na tabela progressiva
 calculate_tax <- function(bruto, tax_table) {
   tax <- 0
   for (i in 1:nrow(tax_table)) {
     lower <- tax_table$lower[i]
     upper <- tax_table$upper[i]
     rate <- tax_table$rate[i]
-    # Se o valor bruto ultrapassa o limite inferior da faixa,
-    # calcula o rendimento tributável nessa faixa.
     if (bruto > lower) {
       taxable_income <- min(bruto, upper) - lower
       tax <- tax + taxable_income * rate
@@ -104,8 +92,6 @@ calculate_tax <- function(bruto, tax_table) {
   return(tax)
 }
 
-# Função para encontrar o valor bruto dado o valor líquido
-# Usamos a função uniroot para resolver a equação: bruto - calculate_tax(bruto) = liquido
 find_bruto <- function(liquido, tax_table, lower_bound = 0, upper_bound = 1e9) {
   f <- function(bruto) {
     bruto - calculate_tax(bruto, tax_table) - liquido
@@ -114,221 +100,135 @@ find_bruto <- function(liquido, tax_table, lower_bound = 0, upper_bound = 1e9) {
   return(result$root)
 }
 
-pnadc_receita_final <- pnadc_receita_final %>% mutate(`13º salário` =  replace_na(`13º salário`, 0))
-pnadc_receita_final <- pnadc_receita_final %>% mutate(imposto_13 = mapply(find_bruto, `13º salário`, MoreArgs = list(tax_table = tax_table))-`13º salário`)
-
-pnadc_receita_final <- pnadc_receita_final %>% mutate(`Rendimentos Recebidos Acumuladamente` =  replace_na(`Rendimentos Recebidos Acumuladamente`, 0))
-pnadc_receita_final <- pnadc_receita_final %>% mutate(imposto_rra = mapply(find_bruto, `Rendimentos Recebidos Acumuladamente`, MoreArgs = list(tax_table = tax_table))-`Rendimentos Recebidos Acumuladamente`)
-
-pnadc_receita_final <- pnadc_receita_final %>% mutate(plr_distribuido =  replace_na(plr_distribuido, 0))
-pnadc_receita_final <- pnadc_receita_final %>% mutate(plr_distribuido =  plr_distribuido*12)
-pnadc_receita_final <- pnadc_receita_final %>% mutate(imposto_plr = mapply(find_bruto, plr_distribuido, MoreArgs = list(tax_table = tax_table_plr))-plr_distribuido)
-pnadc_receita_final <- pnadc_receita_final %>% mutate(imposto_plr = imposto_plr/12)
-
-pnadc_receita_final <- pnadc_receita_final %>% mutate(`Ganhos de Capital na Alienação de Bens/Direitos` =  replace_na(`Ganhos de Capital na Alienação de Bens/Direitos`, 0))
-pnadc_receita_final <- pnadc_receita_final %>% mutate(`Ganhos Líquidos em Renda Variável` =  replace_na(`Ganhos Líquidos em Renda Variável`, 0))
-pnadc_receita_final <- pnadc_receita_final %>% mutate(`Juros sobre Capital Próprio` =  replace_na(`Juros sobre Capital Próprio`, 0))
-pnadc_receita_final <- pnadc_receita_final %>% mutate(`Outros` =  replace_na(`Outros`, 0))
-
-
-pnadc_receita_final <- pnadc_receita_final %>% mutate(capital = `Rendimentos de Aplicações Financeiras` + `Ganhos Líquidos em Renda Variável`+`Juros sobre Capital Próprio` + Outros)
-pnadc_receita_final <- pnadc_receita_final %>% mutate(imposto_capital = (capital/(1-0.15)-capital))
-pnadc_receita_final$renda_irpfepnad <- coalesce(pnadc_receita_final$rendimento_todasfontes_calibrado, pnadc_receita_final$rendimento_todasfontes)
-
-pnadc_receita_final <- pnadc_receita_final %>% mutate(`Rendimentos de Caderneta de Poupança etc` = replace_na(`Rendimentos de Caderneta de Poupança etc`,0))
-pnadc_receita_final <- pnadc_receita_final %>% mutate(`Indenização por Rescisão do Contrato de Trabalho etc` = replace_na(`Indenização por Rescisão do Contrato de Trabalho etc`,0))
-pnadc_receita_final <- pnadc_receita_final %>% mutate(renda_base = renda_irpfepnad - `Rendimentos Recebidos Acumuladamente`-`Ganhos de Capital na Alienação de Bens/Direitos`-`Rendimentos de Caderneta de Poupança etc`-`Indenização por Rescisão do Contrato de Trabalho etc`)
-pnadc_receita_final <- pnadc_receita_final %>% mutate(imposto_withholding = imposto_capital+imposto_plr)
-pnadc_receita_final <- pnadc_receita_final %>% mutate(imposto_withholding = replace_na(imposto_withholding,0))
-
-# 3 - Função IR Mensal (Nova Proposta Até 7k) -----------------------------
-#    - Até 5k isento
-#    - 5k a 7k: redução linear
-#    - Acima de 7k: sem abatimento adicional
+# Preenche NAs antes de qualquer cálculo
 pnadc_receita_final <- pnadc_receita_final %>%
-  mutate(across(all_of(despesas_dedutiveis), ~ replace_na(., 0)),
-         despesas_dedutiveis_tot = rowSums(across(all_of(despesas_dedutiveis))))
-pnadc_receita_final <- pnadc_receita_final %>% mutate(`Rendimento Tributável` = replace_na(`Rendimento Tributável`,0))
-pnadc_receita_final <- pnadc_receita_final %>% 
-  mutate(base_c_hip = pmax(pmin((`Rendimento Tributável` - despesas_dedutiveis_tot), 0.8*`Rendimento Tributável`),0))
+  mutate(across(c(`13º salário`, `Rendimentos Recebidos Acumuladamente`,
+                  `Ganhos de Capital na Alienação de Bens/Direitos`,
+                  `Ganhos Líquidos em Renda Variável`, `Juros sobre Capital Próprio`,
+                  `Outros`, `Rendimentos de Caderneta de Poupança etc`,
+                  `Indenização por Rescisão do Contrato de Trabalho etc`,
+                  `Lucros e Dividendos`), ~replace_na(., 0)))
 
-calcula_irpf_mensal_novo <- function(renda, rendimento_tributavel) {
-  # Primeiro, calcula o imposto base conforme a redução até 7.000
-  if (renda <= 5000) {
-    base_tax <- 0
-  } else if (renda <= 7000) {
-    reducao <- 1095.11 - 0.156445 * rendimento_tributavel
-    base_tax <- max(calcula_irpf_mensal_antigo(renda) - reducao, 0)
-  } else {
-    base_tax <- calcula_irpf_mensal_antigo(renda)
-  }
-}
-pnadc_receita_final$base_c_rb4 <- coalesce(pnadc_receita_final$`Base de Cálculo`, 0)
-pnadc_receita_final$base_c_rb8 <- coalesce(pnadc_receita_final$RB8, 0)
-pnadc_receita_final$base_c <- if_else(pnadc_receita_final$base_c_rb8<=5000, pnadc_receita_final$base_c_rb8, pnadc_receita_final$base_c_hip)
-#pnadc_receita_final$base_c <- pnadc_receita_final$base_c_hip
+# Calcula impostos intermediários
 pnadc_receita_final <- pnadc_receita_final %>%
   mutate(
-    # IR mensal no regime antigo
-    irpf_mensal_antigo = map_dbl(base_c, calcula_irpf_mensal_antigo),
-    # IR mensal com isenção/redução até 7k
-    irpf_mensal_novo = map2_dbl(base_c,`Rendimento Tributável`, calcula_irpf_mensal_novo)
+    imposto_13 = mapply(find_bruto, `13º salário`, MoreArgs = list(tax_table = tax_table)) - `13º salário`,
+    imposto_rra = mapply(find_bruto, `Rendimentos Recebidos Acumuladamente`, MoreArgs = list(tax_table = tax_table)) - `Rendimentos Recebidos Acumuladamente`,
+    plr_distribuido = plr_distribuido * 12,
+    imposto_plr = mapply(find_bruto, plr_distribuido, MoreArgs = list(tax_table = tax_table_plr)) - plr_distribuido,
+    imposto_plr = imposto_plr / 12,
+    capital = `Rendimentos de Aplicações Financeiras` + `Ganhos Líquidos em Renda Variável` + `Juros sobre Capital Próprio` + Outros,
+    imposto_capital = (capital / (1 - 0.15) - capital),
+    renda_irpfepnad = coalesce(rendimento_todasfontes_calibrado, rendimento_todasfontes),
+    imposto_withholding = replace_na(imposto_capital + imposto_plr, 0)
   )
 
-pnadc_receita_final <- pnadc_receita_final %>% mutate(aliquota_pre_ricos = (imposto_withholding+irpf_mensal_novo)/renda_base)
-pnadc_receita_final <- pnadc_receita_final %>% mutate(base_tax = imposto_withholding+irpf_mensal_novo)
+# 3 - Aplica IR Mensal (Nova Proposta) ----------------------------------
 
-# Aplica complemento para altas rendas:
-imposto_final <- function(base_tax,renda){
-  if (renda <= 50000) {
+pnadc_receita_final <- pnadc_receita_final %>%
+  mutate(across(all_of(despesas_dedutiveis), ~ replace_na(., 0)),
+         despesas_dedutiveis_tot = rowSums(across(all_of(despesas_dedutiveis))),
+         `Rendimento Tributável` = replace_na(`Rendimento Tributável`, 0),
+         base_c_hip = pmax(pmin((`Rendimento Tributável` - despesas_dedutiveis_tot), 0.8 * `Rendimento Tributável`), 0),
+         base_c_rb4 = coalesce(`Base de Cálculo`, 0),
+         base_c_rb8 = coalesce(RB8, 0),
+         base_c = if_else(base_c_rb8 <= 5000, base_c_rb8, base_c_hip))
+
+calcula_irpf_mensal_novo <- function(renda, rendimento_tributavel) {
+  if (renda <= 5000) {
+    0
+  } else if (renda <= 7000) {
+    reducao <- 1095.11 - 0.156445 * rendimento_tributavel
+    max(calcula_irpf_mensal_antigo(renda) - reducao, 0)
+  } else {
+    calcula_irpf_mensal_antigo(renda)
+  }
+}
+
+pnadc_receita_final <- pnadc_receita_final %>%
+  mutate(irpf_mensal_antigo = map_dbl(base_c, calcula_irpf_mensal_antigo),
+         irpf_mensal_novo = map2_dbl(base_c, `Rendimento Tributável`, calcula_irpf_mensal_novo),
+         base_tax = imposto_withholding + irpf_mensal_novo)
+
+# ---------------------- Hipótese A: sem dedução de 20% sobre lucros e dividendos ----------------------
+
+pnadc_hipotese_A <- pnadc_receita_final %>%
+  mutate(renda_base = renda_irpfepnad - `Rendimentos Recebidos Acumuladamente` -
+           `Ganhos de Capital na Alienação de Bens/Direitos` -
+           `Rendimentos de Caderneta de Poupança etc` -
+           `Indenização por Rescisão do Contrato de Trabalho etc`)
+
+# Define a função imposto_final no escopo global
+imposto_final <- function(base_tax, renda) {
+  if (is.na(base_tax) || is.na(renda)) {
+    return(NA_real_)
+  } else if (renda <= 50000) {
     return(base_tax)
   } else if (renda < 100000) {
     desired_tax <- ((((renda * 12 / 60000 - 10)))/100) * renda
     return(max(base_tax, desired_tax))
-  } else {  # Caso renda >= 100
+  } else {
     desired_tax <- (0.10) * renda
     return(max(base_tax, desired_tax))
   }
 }
 
+# Recalcula imposto final e renda pós-tributação
+pnadc_hipotese_A <- pnadc_hipotese_A %>%
+  mutate(imposto_calculado = pmap_dbl(list(base_tax, renda_base), imposto_final),
+         renda_pos_novo = renda_base - imposto_calculado,
+         renda_pos_atual = renda_base - (imposto_withholding + irpf_mensal_antigo))
 
-## Aliquota média no topo:
-pnadc_receita_final <- pnadc_receita_final %>%
-  mutate(
-    aliquota_minima = case_when(
-      renda_base <= 50000 / 1 ~ 0,
-      
-      renda_base < 100000 / 1 ~ {
-        desired_tax <- (((renda_base * 12 / (60000 / 1)) - 10)) / 100
-        pmax(0, desired_tax)
-      },
-      
-      TRUE ~ 0.10  # Para renda >= 100 mil
-    )
-  )
+# Calcula indicadores fiscais para ambas as hipóteses
+irpf_total_atual_A <- 12 * sum(pnadc_hipotese_A$peso_comcalib * (pnadc_hipotese_A$irpf_mensal_antigo + pnadc_hipotese_A$imposto_withholding), na.rm = TRUE) / 1e9
+custo_isencao_mensal_A <- 12 * sum(pnadc_hipotese_A$peso_comcalib * (pnadc_hipotese_A$irpf_mensal_antigo - pnadc_hipotese_A$irpf_mensal_novo), na.rm = TRUE) / 1e9
+irpf_total_novo_A <- 12 * sum(pnadc_hipotese_A$peso_comcalib * pnadc_hipotese_A$imposto_calculado, na.rm = TRUE) / 1e9
 
-pnadc_receita_final <- pnadc_receita_final %>%
-  mutate(
-    aliquota_efetiva_atual = base_tax / renda_base
-  )
+# Hipótese B: com redução de 20% sobre lucros e dividendos
+pnadc_hipotese_B <- pnadc_receita_final %>%
+  mutate(renda_base = renda_irpfepnad - 0.2 * `Lucros e Dividendos` -
+           `Rendimentos Recebidos Acumuladamente` -
+           `Ganhos de Capital na Alienação de Bens/Direitos` -
+           `Rendimentos de Caderneta de Poupança etc` -
+           `Indenização por Rescisão do Contrato de Trabalho etc`)
 
+pnadc_hipotese_B <- pnadc_hipotese_B %>%
+  mutate(imposto_calculado = pmap_dbl(list(base_tax, renda_base), imposto_final),
+         renda_pos_novo = renda_base - imposto_calculado,
+         renda_pos_atual = renda_base - (imposto_withholding + irpf_mensal_antigo))
 
+irpf_total_atual_B <- 12 * sum(pnadc_hipotese_B$peso_comcalib * (pnadc_hipotese_B$irpf_mensal_antigo + pnadc_hipotese_B$imposto_withholding), na.rm = TRUE) / 1e9
+custo_isencao_mensal_B <- 12 * sum(pnadc_hipotese_B$peso_comcalib * (pnadc_hipotese_B$irpf_mensal_antigo - pnadc_hipotese_B$irpf_mensal_novo), na.rm = TRUE) / 1e9
+irpf_total_novo_B <- 12 * sum(pnadc_hipotese_B$peso_comcalib * pnadc_hipotese_B$imposto_calculado, na.rm = TRUE) / 1e9
 
-limite_50k <- 50000 / 1
-
-pnadc_receita_final$quantis <- weighted_ntile(pnadc_receita_final$renda_base,
-                                              pnadc_receita_final$peso_comcalib, 100)
-
-
-pnadc_receita_final <- pnadc_receita_final %>%
-  group_by(subgrupo = quantis == 100) %>%
-  mutate(subdecil_topo = if_else(subgrupo,
-                                 weighted_ntile(renda_base, peso_comcalib, 10),
-                                 NA_integer_)) %>%
-  ungroup()
-
-pnadc_receita_final <- pnadc_receita_final %>%
-  mutate(
-    aliquota_minima = case_when(
-      renda_base <= 50000 / 1 ~ 0,
-      
-      renda_base < 100000 / 1 ~ {
-        desired_tax <- (((renda_base * 12 / (60000 / 1)) - 10)) / 100
-        pmax(0, desired_tax)
-      },
-      
-      TRUE ~ 0.10  # Para renda >= 100 mil
-    )
-  )
-
-pnadc_receita_final <- pnadc_receita_final %>%
-  mutate(
-    aliquota_efetiva_atual = base_tax / renda_base
-  )
-
-
-df_top1 <- pnadc_receita_final %>%
-  filter(quantis == 100) %>%
-  group_by(subdecil_topo) %>%
-  summarise(
-    aliquota_minima_media = weighted.mean(aliquota_minima, peso_comcalib, na.rm = TRUE),
-    aliquota_efetiva_media = weighted.mean(aliquota_efetiva_atual, peso_comcalib, na.rm = TRUE)
-  ) %>%
-  mutate(decis_top1 = paste0("100.", subdecil_topo)) %>%
-  select(decis_top1, aliquota_minima_media, aliquota_efetiva_media)
-
-df_long <- df_top1 %>%
-  pivot_longer(cols = c(aliquota_minima_media, aliquota_efetiva_media),
-               names_to = "Tipo",
-               values_to = "Aliquota") %>%
-  mutate(
-    Tipo = recode(Tipo,
-                  "aliquota_minima_media" = "Alíquota Mínima",
-                  "aliquota_efetiva_media" = "Alíquota Efetiva Atual"),
-    decis_top1 = factor(decis_top1, levels = paste0("100.", 1:10))
-  )
-
-# Garante que a sequência tem 10 valores
-valores_topo <- seq(1, 0.1, length.out = 10)
-
-new_labels <- setNames(
-  sprintf("%.1f", valores_topo),
-  sprintf("100.%d", 1:10)
+# Monta data frame comparativo
+resultados_comparativos <- tibble::tibble(
+  Indicador = c("IRPF Total Atual (bi R$)", "Custo Isenção Mensal (bi R$)", "IRPF Total Novo (bi R$)"),
+  Hipotese_A = c(irpf_total_atual_A, custo_isencao_mensal_A, irpf_total_novo_A),
+  Hipotese_B = c(irpf_total_atual_B, custo_isencao_mensal_B, irpf_total_novo_B)
 )
 
-# Gera o gráfico com os novos rótulos e Alíquota em %
-grafico <- ggplot(df_long, aes(x = factor(decis_top1, levels = sprintf("100.%d", 1:10)), 
-                               y = Aliquota * 100, color = Tipo, group = Tipo)) +
-  geom_line(linewidth = 1.2) +
-  geom_point(size = 2) +
-  scale_color_manual(values = c("Alíquota Mínima" = "#eb52ff", 
-                                "Alíquota Efetiva Atual" = "#3366ff")) +
-  scale_x_discrete(labels = new_labels) +
-  scale_y_continuous(breaks = seq(0, 12, by = 2)) +
-  labs(
-    x = "Subdecis do Topo 1%",
-    y = "Alíquota Efetiva (%)",
-    color = "Tipo de Alíquota"
-  ) +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1),
-        legend.position = "bottom")
-
-# Salva o gráfico
-ggsave("../figures/grafico_aliquotas.png", plot = grafico, width = 8, height = 6, dpi = 300)
+# Exporta para Excel
+writexl::write_xlsx(resultados_comparativos, "tabela_irpf_comparativo.xlsx")
 
 
-# 4 - Aplica Imposto e Calcula Arrecadação --------------------------------
 
-pnadc_receita_final <- pnadc_receita_final %>%
-  mutate(imposto_calculado = pmap_dbl(list(base_tax, renda_base), imposto_final))
-
-pnadc_receita_final$renda_base
-
-
-irpf_total_atual <- 1 * 12* sum(pnadc_receita_final$peso_comcalib * (pnadc_receita_final$irpf_mensal_antigo+pnadc_receita_final$imposto_withholding)) / 1e9
-custo_isencao_mensal    <- 1 * 12* sum(pnadc_receita_final$peso_comcalib *
-                                          (pnadc_receita_final$irpf_mensal_antigo -
-                                             pnadc_receita_final$irpf_mensal_novo)) / 1e9
-irpf_total_novo <- 1 * 12* sum(pnadc_receita_final$peso_comcalib * pnadc_receita_final$imposto_calculado) / 1e9
-
-pnadc_receita_final <- pnadc_receita_final %>% mutate('renda_pos_novo'= renda_base - imposto_calculado)
-pnadc_receita_final <- pnadc_receita_final %>% mutate('renda_pos_atual'= renda_base - (imposto_withholding+irpf_mensal_antigo))
 
 # 5 - Estatísticas Distributivas ------------------------------------------
 ## GINI - NOVO ###
 source('utils/IneqFunctions.R')
-Bottom_Aprop(pnadc_receita_final$renda_pos_novo, pnadc_receita_final$peso_comcalib, 50)
-Top_Aprop(pnadc_receita_final$renda_pos_novo, pnadc_receita_final$peso_comcalib, 100)
-Top_Aprop(pnadc_receita_final$renda_pos_novo, pnadc_receita_final$peso_comcalib, 91)
-StatsGini(pnadc_receita_final$renda_pos_novo, pnadc_receita_final$peso_comcalib)
+Bottom_Aprop(pnadc_hipotese_A$renda_pos_novo, pnadc_hipotese_A$peso_comcalib, 50)
+Top_Aprop(pnadc_hipotese_A$renda_pos_novo, pnadc_hipotese_A$peso_comcalib, 100)
+Top_Aprop(pnadc_hipotese_A$renda_pos_novo, pnadc_hipotese_A$peso_comcalib, 91)
+StatsGini(pnadc_hipotese_A$renda_pos_novo, pnadc_hipotese_A$peso_comcalib)
 
 ## GINI - ANTIGO ###
-Bottom_Aprop(pnadc_receita_final$renda_pos_atual, pnadc_receita_final$peso_comcalib, 50)
-Top_Aprop(pnadc_receita_final$renda_pos_atual, pnadc_receita_final$peso_comcalib, 100)
-Top_Aprop(pnadc_receita_final$renda_pos_atual, pnadc_receita_final$peso_comcalib, 91)
-StatsGini(pnadc_receita_final$renda_pos_atual, pnadc_receita_final$peso_comcalib)
+Bottom_Aprop(pnadc_hipotese_A$renda_pos_atual, pnadc_hipotese_A$peso_comcalib, 50)
+Top_Aprop(pnadc_hipotese_A$renda_pos_atual, pnadc_hipotese_A$peso_comcalib, 100)
+Top_Aprop(pnadc_hipotese_A$renda_pos_atual, pnadc_hipotese_A$peso_comcalib, 91)
+StatsGini(pnadc_hipotese_A$renda_pos_atual, pnadc_hipotese_A$peso_comcalib)
 
+pnadc_receita_final <- pnadc_hipotese_A
 
 # 6 - Gráfico de Alíquotas Efetivas ---------------------------------------
 
@@ -336,13 +236,13 @@ StatsGini(pnadc_receita_final$renda_pos_atual, pnadc_receita_final$peso_comcalib
 #    - Dividimos em quantis (para < 50k), "Ricos" (50k-100k), "Milionários" (>= 100k)
 #    - Alíquota efetiva = [sum(IR * peso) / sum(Renda * peso)] * 100
 #pnadc_receita_final <- pnadc_receita_final %>% mutate(aliq_efetiva_antigo = 
-                                                        #sum(irpf_mensal_antigo*peso_comcalib) / sum(renda_irpfepnad*peso_comcalib),
-                                                      #aliq_efetiva_novo = sum(irpf_mensal_novo*peso_comcalib)/sum(renda_irpfepnad*peso_comcalib)
+#sum(irpf_mensal_antigo*peso_comcalib) / sum(renda_irpfepnad*peso_comcalib),
+#aliq_efetiva_novo = sum(irpf_mensal_novo*peso_comcalib)/sum(renda_irpfepnad*peso_comcalib)
 #)
 
 #df_taxpayers <- pnadc_receita_final %>%
-  # Se quiser, filtra só quem paga IR em algum regime
-  #filter(irpf_mensal_antigo > 0 | irpf_mensal_novo > 0)
+# Se quiser, filtra só quem paga IR em algum regime
+#filter(irpf_mensal_antigo > 0 | irpf_mensal_novo > 0)
 
 # Calcula quantis mensais
 pnadc_receita_final$quantis <- weighted_ntile(pnadc_receita_final$renda_base,
@@ -359,8 +259,8 @@ pnadc_receita_final <- pnadc_receita_final %>%
   )
 
 pnadc_receita_agg <- pnadc_receita_final %>% group_by(divisao_renda) %>%  
-                                               summarise(Regime_Atual = sum((imposto_withholding+irpf_mensal_antigo)*peso_comcalib)/sum(renda_base*peso_comcalib)*100,
-                                                         Nova_Proposta = sum(imposto_calculado*peso_comcalib)/sum(renda_base*peso_comcalib)*100)
+  summarise(Regime_Atual = sum((imposto_withholding+irpf_mensal_antigo)*peso_comcalib)/sum(renda_base*peso_comcalib)*100,
+            Nova_Proposta = sum(imposto_calculado*peso_comcalib)/sum(renda_base*peso_comcalib)*100)
 
 
 
@@ -552,14 +452,14 @@ irpf_total_novo_aliMax <- 1 * 12 * sum(pnadc_receita_final$peso_comcalib * pnadc
 
 # Recalcula arrecadações com base nas suas fórmulas
 irpf_total_atual <- 1 * 12 * sum(pnadc_receita_final$peso_comcalib *
-                                      (pnadc_receita_final$irpf_mensal_antigo +
-                                         pnadc_receita_final$imposto_withholding)) / 1e9
+                                   (pnadc_receita_final$irpf_mensal_antigo +
+                                      pnadc_receita_final$imposto_withholding)) / 1e9
 
 irpf_total_novo <- 1 * 12 * sum(pnadc_receita_final$peso_comcalib *
-                                     pnadc_receita_final$imposto_calculado) / 1e9
+                                  pnadc_receita_final$imposto_calculado) / 1e9
 
 irpf_total_aliMax <- 1 * 12 * sum(pnadc_receita_final$peso_comcalib *
-                                       pnadc_receita_final$imposto_ali_max_novo) / 1e9
+                                    pnadc_receita_final$imposto_ali_max_novo) / 1e9
 
 # Diferenças em relação ao atual
 dif_arrec_novo <- irpf_total_novo - irpf_total_atual
