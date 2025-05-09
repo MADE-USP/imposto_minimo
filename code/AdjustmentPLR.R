@@ -6,7 +6,7 @@ setwd(this.dir())
 load('../data/baseRendimentosIsentos.Rda')
 
 rendaMaxima99 <- pnadc_receita_final %>% filter(Centésimo == 99) %>% pull(rendimento_todasfontes_calibrado) %>% max()
-pnadc_receita_final <- pnadc_receita_final %>% mutate(centesimoReceita = if_else(rendimento_todasfontes_calibrado>rendaMaxima99, 100, Centésimo))
+pnadc_receita_final <- pnadc_receita_final %>% mutate(centesimoReceita = if_else(rendimento_todasfontes_calibrado>rendaMaxima99, as.integer(100), Centésimo))
 pnadc_receita_final <- pnadc_receita_final %>% mutate(`Participação nos Lucros ou Resultados` = replace_na(`Participação nos Lucros ou Resultados`,0))
 pnadc_receita_final <- pnadc_receita_final %>% group_by(centesimoReceita) %>% mutate(TotalPlr = sum(`Participação nos Lucros ou Resultados`)) %>% ungroup()
 
