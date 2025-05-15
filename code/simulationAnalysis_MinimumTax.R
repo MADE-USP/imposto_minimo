@@ -4,12 +4,10 @@ rm(list=ls())
 # 0 - Imports e Carregamento da Base --------------------------------------
 
 library(haven)
-library(ggplot2)
 library(modi)
 library(acid)
 library(tidyverse)
 library(hutils)
-library(dplyr)
 library(tidyr)
 library(scales)
 library(this.path)
@@ -202,7 +200,7 @@ custo_isencao_mensal_B <- 12 * sum(pnadc_hipotese_B$peso_comcalib * (pnadc_hipot
 irpf_total_novo_B <- 12 * sum(pnadc_hipotese_B$peso_comcalib * pnadc_hipotese_B$imposto_calculado, na.rm = TRUE) / 1e9
 
 # Monta data frame comparativo
-resultados_comparativos <- tibble::tibble(
+resultados_comparativos <- tibble(
   Indicador = c("IRPF Total Atual (bi R$)", "Custo Isenção Mensal (bi R$)", "IRPF Total Novo (bi R$)"),
   Hipotese_A = c(irpf_total_atual_A, custo_isencao_mensal_A, irpf_total_novo_A),
   Hipotese_B = c(irpf_total_atual_B, custo_isencao_mensal_B, irpf_total_novo_B)
@@ -240,7 +238,7 @@ pnadc_receita_final <- pnadc_hipotese_A
 #aliq_efetiva_novo = sum(irpf_mensal_novo*peso_comcalib)/sum(renda_irpfepnad*peso_comcalib)
 #)
 
-#df_taxpayers <- pnadc_receita_final %>%
+# df_taxpayers <- pnadc_receita_final %>%
 # Se quiser, filtra só quem paga IR em algum regime
 #filter(irpf_mensal_antigo > 0 | irpf_mensal_novo > 0)
 
