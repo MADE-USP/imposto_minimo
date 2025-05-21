@@ -30,7 +30,7 @@ for(i in 1:nrow(pnadc_receita_final)) {
   }
 }
 
-individuo_mais_rico_renda <- 1321919521.95
+individuo_mais_rico_renda <- 1321919521.95/12
 pobres_renda <- 0
 pobres_numero <- 0
 pnadc_receita_final <- pnadc_receita_final %>%
