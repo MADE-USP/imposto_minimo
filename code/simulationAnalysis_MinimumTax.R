@@ -428,6 +428,85 @@ print(pAliMax)
 
 ggsave("../figures/grafico_proposta.png", plot = pAliMax, width = 10, height = 6, dpi = 300)
 
+# Aliquota Realmente Progressiva
+lambda <- 0.00001
+r_min <- 50000
+r_max <- 250000
+aliquota_topo <- 0.15
+
+# Função contínua de alíquota efetiva, aplicada apenas para quantis == 100
+aliquota_progressiva <- function(r, aliMax) {
+  ifelse(r <= r_min, aliMax,
+         ifelse(r >= r_max, aliquota_topo,
+                aliMax + (aliquota_topo - aliMax) *
+                  (exp(lambda * (r - r_min)) - 1) /
+                  (exp(lambda * (r_max - r_min)) - 1)))
+}
+
+# Define alíquota com base na regra: mantém alíquota anterior até o quantil 99, só altera no topo
+pnadc_receita_final <- pnadc_receita_final %>%
+  mutate(aliquota_crescente_cont = case_when(
+    quantis < 100 ~ imposto_calculado / renda_base,
+    renda_base >= 250000 ~ 0.15,
+    TRUE ~ aliquota_progressiva(renda_base, aliMax)
+  ),
+  imposto_ali_crescente = pmax(aliquota_crescente_cont * renda_base, imposto_calculado),
+  renda_pos_aliCresc = renda_base - imposto_ali_crescente)
+# Calcula alíquota efetiva média por grupo
+graphAliCresc <- pnadc_receita_final %>%
+  filter(!is.na(divisao_renda)) %>%
+  group_by(divisao_renda) %>%
+  summarise(
+    Proposta_Progressiva_Crescente = sum(imposto_ali_crescente * peso_comcalib) /
+      sum(renda_base * peso_comcalib) * 100,
+    .groups = "drop"
+  )
+
+# Junta com dados já existentes
+graphAliMax <- left_join(graphAliMax, graphAliCresc, by = "divisao_renda")
+df_long <- graphAliMax %>%
+  pivot_longer(cols = c(Regime_Atual, Nova_Proposta, Proposta_Progressiva_Crescente),
+               names_to = "Regime",
+               values_to = "Aliquota_Efetiva") %>%
+  mutate(Regime = case_when(
+    Regime == "Regime_Atual" ~ "Regime Atual",
+    Regime == "Nova_Proposta" ~ "PL 1.087",
+    Regime == "Proposta_Progressiva_Crescente" ~ "Proposta Progressiva",
+    TRUE ~ Regime
+  )) %>%
+  filter(
+    (!is.na(divisao_renda)) &
+      (
+        (suppressWarnings(as.numeric(divisao_renda)) > 80) |
+          divisao_renda %in% c("100.1-100.7", "100.8", "100.9", "100.10")
+      ) &
+      Aliquota_Efetiva >= 0
+  ) %>%
+  distinct()
+# Define ordem do eixo x
+ordem_x <- c(as.character(80:99), "100.1-100.7", "100.8", "100.9", "100.10")
+
+# Aplica fator ordenado
+df_long$divisao_renda <- factor(df_long$divisao_renda, levels = ordem_x)
+
+pAliCresc <- ggplot(df_long, aes(x = divisao_renda, y = Aliquota_Efetiva,
+                                 color = Regime, group = Regime)) +
+  geom_line(linewidth = 1.25) +
+  theme_bw() +
+  scale_color_manual(values = c(
+    "Regime Atual" = "#3366ff",
+    "PL 1.087" = "#eb52ff",
+    "Proposta Progressiva" = "#45ff66"
+  )) +
+  xlab("Posição na Distribuição de Renda") +
+  ylab("Alíquota Efetiva (%)") +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "bottom"
+  )
+
+ggsave("../figures/grafico_proposta_progressiva_vs_pl1087.png",
+       plot = pAliCresc, width = 10, height = 6, dpi = 300)
 
 # Cria coluna auxiliar com alíquota efetiva apenas para cálculo do limite
 pnadc_receita_final <- pnadc_receita_final %>%
@@ -458,6 +537,10 @@ irpf_total_novo <- 1 * 12 * sum(pnadc_receita_final$peso_comcalib *
 
 irpf_total_aliMax <- 1 * 12 * sum(pnadc_receita_final$peso_comcalib *
                                     pnadc_receita_final$imposto_ali_max_novo) / 1e9
+irpf_total_aliCresc <- 12 * sum(
+  pnadc_receita_final$peso_comcalib * pnadc_receita_final$imposto_ali_crescente,
+  na.rm = TRUE
+) / 1e9
 
 # Diferenças em relação ao atual
 dif_arrec_novo <- irpf_total_novo - irpf_total_atual
@@ -482,6 +565,15 @@ bottom50_aliMax <- Bottom_Aprop(pnadc_receita_final$renda_pos_aliMax, pnadc_rece
 top10_aliMax <- Top_Aprop(pnadc_receita_final$renda_pos_aliMax, pnadc_receita_final$peso_comcalib, 91)
 top1_aliMax <- Top_Aprop(pnadc_receita_final$renda_pos_aliMax, pnadc_receita_final$peso_comcalib, 100)
 
+## Aliquota Realmente Progressiva
+gini_aliCresc <- StatsGini(pnadc_receita_final$renda_pos_aliCresc, pnadc_receita_final$peso_comcalib)
+# Apropriação dos 50% mais pobres
+bottom50_aliCresc <- Bottom_Aprop(pnadc_receita_final$renda_pos_aliCresc, pnadc_receita_final$peso_comcalib, 50)
+# Apropriação do top 10%
+top10_aliCresc <- Top_Aprop(pnadc_receita_final$renda_pos_aliCresc, pnadc_receita_final$peso_comcalib, 91)
+# Apropriação do top 1%
+top1_aliCresc <- Top_Aprop(pnadc_receita_final$renda_pos_aliCresc, pnadc_receita_final$peso_comcalib, 100)
+
 # Tabela final
 tabela_resultados <- data.frame(
   Cenário = c("Regime Atual", "Nova Proposta", "Nova c/ Aliq. Máxima"),
@@ -491,6 +583,18 @@ tabela_resultados <- data.frame(
   Top_1 = c(top1_atual, top1_novo, top1_aliMax),
   Arrecadacao_BR = c(irpf_total_atual, irpf_total_novo, irpf_total_aliMax),
   Dif_Arrecadacao_BR = c(0, dif_arrec_novo, dif_arrec_aliMax)
+)
+tabela_resultados <- bind_rows(
+  tabela_resultados,
+  data.frame(
+    Cenário = "Nova c/ Aliq. Crescente",
+    Gini = gini_aliCresc,
+    Bottom_50 = bottom50_aliCresc,
+    Top_10 = top10_aliCresc,
+    Top_1 = top1_aliCresc,
+    Arrecadacao_BR = irpf_total_aliCresc,
+    Dif_Arrecadacao_BR = irpf_total_aliCresc - irpf_total_atual
+  )
 )
 
 # Exibe
@@ -541,9 +645,14 @@ indicadores_novo_ext <- calcular_indicadores_ext(pnadc_receita_final$renda_pos_n
 indicadores_aliMax_ext <- calcular_indicadores_ext(pnadc_receita_final$renda_pos_aliMax,
                                                    pnadc_receita_final$peso_comcalib,
                                                    "Nova c/ Aliq. Máxima")
+indicadores_aliCresc_ext <- calcular_indicadores_ext(
+  pnadc_receita_final$renda_pos_aliCresc,
+  pnadc_receita_final$peso_comcalib,
+  "Nova c/ Aliq. Crescente"
+)
 
 # Junta tudo
-tabela_percentis_ext <- bind_rows(indicadores_atual_ext, indicadores_novo_ext, indicadores_aliMax_ext)
+tabela_percentis_ext <- bind_rows(indicadores_atual_ext, indicadores_novo_ext, indicadores_aliMax_ext, indicadores_aliCresc_ext)
 
 # Exibe
 print(tabela_percentis_ext)
