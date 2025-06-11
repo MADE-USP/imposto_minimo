@@ -362,7 +362,7 @@ p <- ggplot(df_long, aes(x = divisao_renda, y = Aliquota_Efetiva,
 print(p)
 
 ggsave("../figures/grafico_aliquota.png", plot = p, width = 10, height = 6, dpi = 300)
-
+write.csv(df_long, '../tables/tabelaFigura1.csv', row.names = F)
 
 
 # 7 - Simulação - Alíquota Máxima -----------------------------------------
@@ -525,6 +525,76 @@ pnadc_receita_final <- pnadc_receita_final %>%
 
 irpf_total_novo_aliMax <- 1 * 12 * sum(pnadc_receita_final$peso_comcalib * pnadc_receita_final$imposto_ali_max_novo, na.rm = TRUE) / 1e9
 
+# Proposta - Tabata -------------------------------------------------------
+
+imposto_tabata <- function(base_tax, renda) {
+  if (is.na(base_tax) || is.na(renda)) {
+    return(NA_real_)
+  } else if (renda <= 50000) {
+    return(base_tax)
+  } else if (renda < 150000) {
+    aliquota_minima <- (renda / 60000) - 10
+    desired_tax <- max(aliquota_minima, 0) * renda
+    return(max(base_tax, desired_tax))
+  } else {
+    desired_tax <- 0.20 * renda
+    return(max(base_tax, desired_tax))
+  }
+}
+pnadc_receita_final <- pnadc_receita_final %>%
+  mutate(imposto_tabata = pmap_dbl(list(base_tax, renda_base), imposto_tabata),
+         renda_pos_tabata = renda_base - imposto_tabata)
+
+graphAliTabata <- pnadc_receita_final %>%
+  filter(!is.na(divisao_renda)) %>%
+  group_by(divisao_renda) %>%
+  summarise(
+    Proposta_Tabata = sum(imposto_tabata * peso_comcalib) /
+      sum(renda_base * peso_comcalib) * 100,
+    .groups = "drop"
+  )
+graphAliMax <- left_join(graphAliMax, graphAliTabata, by = "divisao_renda")
+df_long <- graphAliMax %>%
+  pivot_longer(cols = c(Regime_Atual, Proposta_Tabata, Proposta_Progressiva_Crescente),
+               names_to = "Regime",
+               values_to = "Aliquota_Efetiva") %>%
+  mutate(Regime = case_when(
+    Regime == "Regime_Atual" ~ "Regime Atual",
+    Regime == "Proposta_Tabata" ~ "PL Tabata",
+    Regime == "Proposta_Progressiva_Crescente" ~ "Proposta Made",
+    TRUE ~ Regime
+  )) %>%
+  filter(
+    (!is.na(divisao_renda)) &
+      (
+        (suppressWarnings(as.numeric(divisao_renda)) > 80) |
+          divisao_renda %in% c("100.1-100.7", "100.8", "100.9", "100.10")
+      ) &
+      Aliquota_Efetiva >= 0
+  ) %>%
+  distinct()
+# Define ordem do eixo x
+ordem_x <- c(as.character(80:99), "100.1-100.7", "100.8", "100.9", "100.10")
+
+# Aplica fator ordenado
+df_long$divisao_renda <- factor(df_long$divisao_renda, levels = ordem_x)
+
+pTabata <- ggplot(df_long, aes(x = divisao_renda, y = Aliquota_Efetiva,
+                                 color = Regime, group = Regime)) +
+  geom_line(linewidth = 1.25) +
+  theme_bw() +
+  scale_color_manual(values = c(
+    "Regime Atual" = "#3366ff",
+    "PL Tabata" = "#eb52ff",
+    "Proposta Made" = "#45ff66"
+  )) +
+  xlab("Posição na Distribuição de Renda") +
+  ylab("Alíquota Efetiva (%)") +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "bottom"
+  )
+ggsave("../figures/tabata.png", plo = pTabata, width = 8, height = 5, dpi = 300)
 # Gini:
 
 # Recalcula arrecadações com base nas suas fórmulas
@@ -542,6 +612,7 @@ irpf_total_aliCresc <- 12 * sum(
   na.rm = TRUE
 ) / 1e9
 
+irpf_total_tabata <- 12* sum(pnadc_receita_final$peso_comcalib * pnadc_receita_final$imposto_tabata, na.rm=T)/1e9
 # Diferenças em relação ao atual
 dif_arrec_novo <- irpf_total_novo - irpf_total_atual
 dif_arrec_aliMax <- irpf_total_aliMax - irpf_total_atual
@@ -564,6 +635,12 @@ gini_aliMax <- StatsGini(pnadc_receita_final$renda_pos_aliMax, pnadc_receita_fin
 bottom50_aliMax <- Bottom_Aprop(pnadc_receita_final$renda_pos_aliMax, pnadc_receita_final$peso_comcalib, 50)
 top10_aliMax <- Top_Aprop(pnadc_receita_final$renda_pos_aliMax, pnadc_receita_final$peso_comcalib, 91)
 top1_aliMax <- Top_Aprop(pnadc_receita_final$renda_pos_aliMax, pnadc_receita_final$peso_comcalib, 100)
+
+## Nova com alíquota máxima estendida
+gini_tabata <- StatsGini(pnadc_receita_final$renda_pos_tabata, pnadc_receita_final$peso_comcalib)
+bottom50_tabata <- Bottom_Aprop(pnadc_receita_final$renda_pos_tabata, pnadc_receita_final$peso_comcalib, 50)
+top10_tabata <- Top_Aprop(pnadc_receita_final$renda_pos_tabata, pnadc_receita_final$peso_comcalib, 91)
+top1_tabata <- Top_Aprop(pnadc_receita_final$renda_pos_tabata, pnadc_receita_final$peso_comcalib, 100)
 
 ## Aliquota Realmente Progressiva
 gini_aliCresc <- StatsGini(pnadc_receita_final$renda_pos_aliCresc, pnadc_receita_final$peso_comcalib)
@@ -594,6 +671,18 @@ tabela_resultados <- bind_rows(
     Top_1 = top1_aliCresc,
     Arrecadacao_BR = irpf_total_aliCresc,
     Dif_Arrecadacao_BR = irpf_total_aliCresc - irpf_total_atual
+  )
+)
+tabela_resultados <- bind_rows(
+  tabela_resultados,
+  data.frame(
+    Cenário = "Proposta - Tabata",
+    Gini = gini_tabata,
+    Bottom_50 = bottom50_tabata,
+    Top_10 = top10_tabata,
+    Top_1 = top1_tabata,
+    Arrecadacao_BR = irpf_total_tabata,
+    Dif_Arrecadacao_BR = irpf_total_tabata - irpf_total_atual
   )
 )
 
