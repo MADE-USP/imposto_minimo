@@ -27,6 +27,7 @@ Top_Aprop <- function(x, w = rep(1,length(x)),centile){
   aprop <- sum(((top$income)*(top$weights)))/sum(x*w)
   return(aprop)
 }
+
 Top_Aprop_thousandth <- function(x, w = rep(1,length(x)),centile){
   # Appropriation of national income, assets, etc. by the top x%
   centiles = weighted_ntile(x, w, 1000)
@@ -35,6 +36,16 @@ Top_Aprop_thousandth <- function(x, w = rep(1,length(x)),centile){
   aprop <- sum(((top$income)*(top$weights)))/sum(x*w)
   return(aprop)
 }
+
+Top_Aprop_Decile <- function(x, w = rep(1,length(x)), decile){
+  # Appropriation of national income, assets, etc. by the top x%
+  deciles = weighted_ntile(x, w, 10)
+  df <- data.frame(income = x, weights = w, deciles = deciles)
+  top <- df %>% filter(deciles>=decile)
+  aprop <- sum(((top$income)*(top$weights)))/sum(x*w)
+  return(aprop)
+}
+
 Bottom_Aprop <- function(x, w = rep(1,length(x)),centile){
   # Appropriation of national income, assets, etc. by the bottom x%
   centiles = weighted_ntile(x, w, 100)
