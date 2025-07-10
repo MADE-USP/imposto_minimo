@@ -14,10 +14,8 @@ library(this.path)
 library(writexl)
 library(readxl)
 library(forcats)
-
-source('utils/IneqFunctions.R')
-
 setwd(this.dir())
+source('utils/IneqFunctions.R')
 
 cores_made <- c("#45ff66", "#eb52ff", "#3366ff", "#feff41")
 load('../data/baseRendimentosIsentosPlrAdj.Rda')
@@ -208,6 +206,30 @@ pnadc_receita_final <- pnadc_receita_final %>%
 
 irpf_total_novo_p9 <- 12 * sum(pnadc_receita_final$peso_comcalib * pnadc_receita_final$imposto_calculado_p9, na.rm = TRUE) / 1e9
 
+# 10% de IR Mínimo ---------------------------------------------------------
+
+imposto_final_p10 <- function(base_tax, renda) {
+  if (is.na(base_tax) || is.na(renda)) {
+    return(NA_real_)
+  } else if (renda <= 50000) {
+    return(base_tax)
+  } else if (renda < 100000) {
+    desired_tax <- ((((renda * 12 / 60000 - 10)))/100) * renda
+    return(max(base_tax, desired_tax))
+  } else {
+    desired_tax <- (0.10) * renda
+    return(max(base_tax, desired_tax))
+  }
+}
+
+
+pnadc_receita_final <- pnadc_receita_final %>%
+  mutate(imposto_calculado_p10 = pmap_dbl(list(base_tax, renda_base), imposto_final_p10),
+         renda_pos_novo_p10 = renda_base - imposto_calculado_p10,
+         renda_pos_atual = renda_base - (imposto_withholding + irpf_mensal_antigo))
+
+irpf_total_novo_p10 <- 12 * sum(pnadc_receita_final$peso_comcalib * pnadc_receita_final$imposto_calculado_p10, na.rm = TRUE) / 1e9
+
 
 # 10% sobre Lucros e Dividendos -------------------------------------------
 
@@ -253,18 +275,20 @@ pnadc_receita_agg <- pnadc_receita_final %>%
     Regime_Atual = sum((imposto_withholding + irpf_mensal_antigo) * peso_comcalib) / sum(renda_base * peso_comcalib) * 100,
     Proposta_p8 = sum(imposto_calculado_p8 * peso_comcalib) / sum(renda_base * peso_comcalib) * 100,
     Proposta_p9 = sum(imposto_calculado_p9 * peso_comcalib) / sum(renda_base * peso_comcalib) * 100,
+    Proposta_p10 = sum(imposto_calculado_p10 * peso_comcalib) / sum(renda_base * peso_comcalib) * 100,
     Proposta_ld = sum(irpf_ld * peso_comcalib) / sum(renda_base * peso_comcalib) * 100,
   )
 
 
 df_long <- pnadc_receita_agg %>%
-  pivot_longer(cols = c(Regime_Atual, Proposta_p8, Proposta_p9, Proposta_ld),
+  pivot_longer(cols = c(Regime_Atual, Proposta_p8, Proposta_p9, Proposta_p10, Proposta_ld),
                names_to = "Regime",
                values_to = "Aliquota_Efetiva") %>%
   mutate(Regime = recode(Regime,
                          "Regime_Atual" = "Regime Atual",
                          "Proposta_p8" = "8% de Imposto Mínimo",
                          "Proposta_p9" = "9% de Imposto Mínimo",
+                         "Proposta_p10" = "10% de Imposto Mínimo",
                          "Proposta_ld" = "Imposto sobre Lucros e Dividendos")) %>%
   distinct() %>%
   filter(Aliquota_Efetiva >= 0)
@@ -306,7 +330,7 @@ p <- ggplot(df_long, aes(x = divisao_renda, y = Aliquota_Efetiva,
                          color = Regime, group = Regime)) +
   geom_line(linewidth = 1) +
   theme_bw() +
-  scale_color_manual(values = c("Regime Atual" = "#3366ff", "8% de Imposto Mínimo" = "#eb52ff", "9% de Imposto Mínimo" = "#feff41", "Imposto sobre Lucros e Dividendos"="#45ff66")) +
+  scale_color_manual(values = c("Regime Atual" = "#3366ff", "8% de Imposto Mínimo" = "#eb52ff", "9% de Imposto Mínimo" = "#feff41", "10% de Imposto Mínimo" = "#FF746C", "Imposto sobre Lucros e Dividendos"="#45ff66")) +
   xlab("Posição na Distribuição de Renda") +
   ylab("Alíquota Efetiva (%)") +
   theme(axis.text.x = element_text(angle = 45, hjust = 1),
@@ -331,6 +355,13 @@ bottom50_atual <- Bottom_Aprop(pnadc_receita_final$renda_pos_atual, pnadc_receit
 top10_atual <- Top_Aprop(pnadc_receita_final$renda_pos_atual, pnadc_receita_final$peso_comcalib, 91)
 top1_atual <- Top_Aprop(pnadc_receita_final$renda_pos_atual, pnadc_receita_final$peso_comcalib, 100)
 
+
+## 9% de IR Mínimo
+gini_p10 <- StatsGini(pnadc_receita_final$renda_pos_novo_p10, pnadc_receita_final$peso_comcalib)
+bottom50_p10 <- Bottom_Aprop(pnadc_receita_final$renda_pos_novo_p10, pnadc_receita_final$peso_comcalib, 50)
+top10_p10 <- Top_Aprop(pnadc_receita_final$renda_pos_novo_p10, pnadc_receita_final$peso_comcalib, 91)
+top1_p10 <- Top_Aprop(pnadc_receita_final$renda_pos_novo_p10, pnadc_receita_final$peso_comcalib, 100)
+
 ## 9% de IR Mínimo
 gini_p9 <- StatsGini(pnadc_receita_final$renda_pos_novo_p9, pnadc_receita_final$peso_comcalib)
 bottom50_p9 <- Bottom_Aprop(pnadc_receita_final$renda_pos_novo_p9, pnadc_receita_final$peso_comcalib, 50)
@@ -351,13 +382,13 @@ top1_lucros <- Top_Aprop(pnadc_receita_final$renda_pos_lucros, pnadc_receita_fin
 
 # Tabela com resultados
 tabela_resultados <- data.frame(
-  Cenário = c("Regime Atual", "8% de IR Mínimo", "9% de IR Mínimo", "Lucros e Dividendos"),
-  Gini = c(gini_atual, gini_p8, gini_p9, gini_lucros),
-  Bottom_50 = c(bottom50_atual, bottom50_p8, bottom50_p9, bottom50_lucros),
-  Top_10 = c(top10_atual, top10_p8, top10_p9, top10_lucros),
-  Top_1 = c(top1_atual, top1_p8, top1_p9, top1_lucros),
-  Arrecadacao_BR = c(irpf_total_atual, irpf_total_novo_p8, irpf_total_novo_p9, irpf_total_novo_ld),
-  Dif_Arrecadacao_BR = c(0, (irpf_total_novo_p8-irpf_total_atual), (irpf_total_novo_p9-irpf_total_atual), (irpf_total_novo_ld-irpf_total_atual))
+  Cenário = c("Regime Atual", "8% de IR Mínimo", "9% de IR Mínimo", "10% de IR Mínimo","Lucros e Dividendos"),
+  Gini = c(gini_atual, gini_p8, gini_p9, gini_p10, gini_lucros),
+  Bottom_50 = c(bottom50_atual, bottom50_p8, bottom50_p9, bottom50_p10, bottom50_lucros),
+  Top_10 = c(top10_atual, top10_p8, top10_p9, bottom50_p10, top10_lucros),
+  Top_1 = c(top1_atual, top1_p8, top1_p9, top1_p10, top1_lucros),
+  Arrecadacao_BR = c(irpf_total_atual, irpf_total_novo_p8, irpf_total_novo_p9,irpf_total_novo_p10, irpf_total_novo_ld),
+  Dif_Arrecadacao_BR = c(0, (irpf_total_novo_p8-irpf_total_atual), (irpf_total_novo_p9-irpf_total_atual), (irpf_total_novo_p10-irpf_total_atual),(irpf_total_novo_ld-irpf_total_atual))
 )
 
 
